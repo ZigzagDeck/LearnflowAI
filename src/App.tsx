@@ -11,12 +11,14 @@ type UploadStatus = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
 type ExtractionStatus = 'idle' | 'queued' | 'processing' | 'success' | 'error'
 
 type ExtractedUnit = {
-  reference_type: 'page' | 'slide' | 'image'
+  reference_type: 'page' | 'slide' | 'image' | 'timestamp'
   reference_number: number
   text: string
   has_text: boolean
   ocr_applied: boolean
-  extraction_method: 'native' | 'ocr' | 'native+ocr'
+  extraction_method: string
+  start_seconds?: number
+  end_seconds?: number
 }
 
 function formatFileSize(bytes: number) {
@@ -26,6 +28,16 @@ function formatFileSize(bytes: number) {
 
 function fileExtension(fileName: string) {
   return fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
+}
+
+function formatTimestamp(seconds = 0) {
+  const rounded = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(rounded / 3600)
+  const minutes = Math.floor((rounded % 3600) / 60)
+  const remainder = rounded % 60
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`
+    : `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
 function App() {
@@ -40,6 +52,8 @@ function App() {
   const [processingProgress, setProcessingProgress] = useState(0)
   const [extractionMessage, setExtractionMessage] = useState('')
   const [extractedContent, setExtractedContent] = useState<ExtractedUnit[]>([])
+  const [youtubeUrl, setYoutubeUrl] = useState('')
+  const [activeYoutubeUrl, setActiveYoutubeUrl] = useState('')
 
   const selectFile = (file: File) => {
     if (!ACCEPTED_EXTENSIONS.includes(fileExtension(file.name))) {
@@ -63,6 +77,7 @@ function App() {
     setProcessingProgress(0)
     setExtractionMessage('')
     setExtractedContent([])
+    setActiveYoutubeUrl('')
   }
 
   const uploadFile = () => {
@@ -114,10 +129,42 @@ function App() {
     setExtractedContent(payload.content)
     setExtractionStatus('success')
     setProcessingProgress(100)
-    const extension = selectedFile ? fileExtension(selectedFile.name) : ''
-    const units = extension === '.pdf' ? 'pages' : extension === '.pptx' ? 'slides' : 'image'
-    setExtractionMessage(`Processed ${payload.content.length} ${units} with text extraction and OCR.`)
-  }, [selectedFile])
+    const referenceType = payload.content[0]?.reference_type
+    const units = referenceType === 'page' ? 'pages'
+      : referenceType === 'slide' ? 'slides'
+        : referenceType === 'timestamp' ? 'caption segments' : 'images'
+    setExtractionMessage(referenceType === 'timestamp'
+      ? `Indexed ${payload.content.length} timestamped caption segments.`
+      : `Processed ${payload.content.length} ${units} with text extraction and OCR.`)
+  }, [])
+
+  const importYoutube = async () => {
+    if (!youtubeUrl.trim() || status === 'uploading') return
+    setSelectedFile(null)
+    setStatus('uploading')
+    setMessage('Validating the YouTube link…')
+    setExtractedContent([])
+    setExtractionStatus('idle')
+    try {
+      const response = await fetch(`${API_BASE_URL}/materials/youtube`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: youtubeUrl.trim() }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The YouTube link could not be imported.')
+      setActiveYoutubeUrl(payload.source_url)
+      setUploadedResourceId(payload.resource_id)
+      setExtractionStatus(payload.processing_job?.status || 'queued')
+      setStatus('success')
+      setMessage(payload.deduplicated
+        ? 'This YouTube video already exists. Its saved transcript will be reused.'
+        : 'YouTube link added. Timestamped captions are queued for processing.')
+    } catch (error) {
+      setStatus('error')
+      setMessage(error instanceof Error ? error.message : 'The YouTube link could not be imported.')
+    }
+  }
 
   useEffect(() => {
     if (!uploadedResourceId || !['queued', 'processing'].includes(extractionStatus)) return
@@ -143,7 +190,7 @@ function App() {
           setExtractionStatus('processing')
           setExtractionMessage(job.progress_total
             ? `Extracting text and scanning visual content locally… ${job.progress_current} of ${job.progress_total}`
-            : 'Starting local text extraction and OCR…')
+            : activeYoutubeUrl ? 'Retrieving timestamped YouTube captions…' : 'Starting local text extraction and OCR…')
         } else {
           setExtractionStatus('queued')
           setExtractionMessage('Waiting for the local processing worker…')
@@ -164,7 +211,7 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [uploadedResourceId, extractionStatus, loadExtractedContent])
+  }, [uploadedResourceId, extractionStatus, loadExtractedContent, activeYoutubeUrl])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
@@ -265,6 +312,20 @@ function App() {
               <p className="drop-hint">or drag and drop it here</p>
             </div>
             <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
+            <div className="source-divider"><span>or use a video link</span></div>
+            <div className="youtube-row">
+              <input
+                type="url"
+                value={youtubeUrl}
+                onChange={(event) => setYoutubeUrl(event.target.value)}
+                placeholder="https://www.youtube.com/watch?v=…"
+                aria-label="YouTube video URL"
+              />
+              <button type="button" onClick={() => void importYoutube()} disabled={status === 'uploading'}>
+                Add link
+              </button>
+            </div>
+            <p className="file-note">Public YouTube videos with available captions</p>
             {selectedFile && (
               <div className="selected-file">
                 <div className="file-summary">
@@ -300,6 +361,23 @@ function App() {
                 )}
               </div>
             )}
+            {activeYoutubeUrl && (
+              <div className="selected-file">
+                <div className="file-summary">
+                  <span className="file-type-badge">YT</span>
+                  <div><strong>YouTube video</strong><span title={activeYoutubeUrl}>{activeYoutubeUrl}</span></div>
+                </div>
+                {(extractionStatus === 'queued' || extractionStatus === 'processing') && (
+                  <div className="progress-track"><div style={{ width: `${processingProgress}%` }} /></div>
+                )}
+                <button className="extract-button" type="button" onClick={retryProcessing} disabled={extractionStatus !== 'error'}>
+                  {extractionStatus === 'queued' ? 'Queued for captions'
+                    : extractionStatus === 'processing' ? `Processing captions · ${processingProgress}%`
+                      : extractionStatus === 'success' ? 'Timestamped captions ready'
+                        : 'Retry caption import'}
+                </button>
+              </div>
+            )}
             {message && <p className={`upload-message ${status}`}>{message}</p>}
             {extractionMessage && <p className={`upload-message ${extractionStatus}`}>{extractionMessage}</p>}
           </article>
@@ -317,7 +395,9 @@ function App() {
                 {extractedContent.map((unit) => (
                   <section className={`content-unit ${!unit.has_text ? 'content-unit-empty' : ''}`} key={`${unit.reference_type}-${unit.reference_number}`}>
                     <div className="content-unit-heading">
-                      <span>{unit.reference_type === 'page' ? 'Page' : unit.reference_type === 'slide' ? 'Slide' : 'Image'} {unit.reference_number}</span>
+                      <span>{unit.reference_type === 'timestamp'
+                        ? `${formatTimestamp(unit.start_seconds)}–${formatTimestamp(unit.end_seconds)}`
+                        : `${unit.reference_type === 'page' ? 'Page' : unit.reference_type === 'slide' ? 'Slide' : 'Image'} ${unit.reference_number}`}</span>
                       <small>{unit.extraction_method.replace('+', ' + ')}</small>
                       {!unit.has_text && <small>No extractable text</small>}
                     </div>

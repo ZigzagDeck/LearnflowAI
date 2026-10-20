@@ -13,7 +13,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Guarded Voyage AI embeddings with SQLite lexical/dense rank fusion
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
-End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
+YouTube caption ingestion, citation-safe local RAG foundations, and document OCR are implemented. Summaries, quizzes, uploaded-video transcription, and production Bedrock chat wiring remain incomplete.
 
 ## Folder guide
 
@@ -136,6 +136,12 @@ cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
 ```
 
 Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR uses Google Document AI and embeddings use Voyage AI; chunking, indexing, storage, and jobs remain local. The only AWS service planned is Bedrock.
+
+## YouTube links
+
+Paste a direct public YouTube video, Shorts, or `youtu.be` link in the upload card. The worker retrieves an existing manual or automatically generated caption track, preserves its real timestamps, embeds the transcript with the same guarded embedding provider, and stores everything in local SQLite. It does not download video or audio, so this path has negligible additional RAM use.
+
+Set `LEARNFLOW_YOUTUBE_TRANSCRIPT_LANGUAGES` to a comma-separated priority list such as `en,en-US,en-GB,hi`. Videos that are private, restricted, blocked from the deployment host, or have no usable captions return a clear processing error. This lightweight caption library uses YouTube's internal web endpoints, so it may require maintenance when YouTube changes them.
 
 ## Test the health endpoint
 

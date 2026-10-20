@@ -4,7 +4,11 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .chunking import build_chunks
-from .config import CHUNKING_PIPELINE_VERSION, EXTRACTION_PIPELINE_VERSION
+from .config import (
+    CHUNKING_PIPELINE_VERSION,
+    EXTRACTION_PIPELINE_VERSION,
+    YOUTUBE_TRANSCRIPT_LANGUAGES,
+)
 from .embeddings import (
     EmbeddingProvider,
     EmbeddingUnavailableError,
@@ -13,6 +17,11 @@ from .embeddings import (
 from .extraction import extract_image, extract_pdf, extract_pptx
 from .ocr import OCRReader, OCRUnavailableError, get_ocr_reader
 from .resource_store import ProcessingJob, ResourceStore, ResourceStoreError
+from .youtube_ingestion import (
+    YouTubeCaptionReader,
+    YouTubeTranscriptError,
+    parse_youtube_url,
+)
 
 
 SAFE_GENERIC_FAILURE = "The material could not be processed."
@@ -24,6 +33,9 @@ def process_next_job(
     *,
     ocr_factory: Callable[[], OCRReader] = get_ocr_reader,
     embedding_factory: Callable[[], EmbeddingProvider] = get_embedding_provider,
+    caption_factory: Callable[[], YouTubeCaptionReader] = (
+        lambda: YouTubeCaptionReader(YOUTUBE_TRANSCRIPT_LANGUAGES)
+    ),
 ) -> ProcessingJob | None:
     """Claim and complete at most one queued job in the calling process."""
     job = store.claim_next_extraction()
@@ -44,19 +56,26 @@ def process_next_job(
         )
         content = cached_content
         if content is None:
-            path = upload_dir / resource.stored_filename
-            if not path.is_file():
-                raise OSError("The uploaded material file is missing.")
-            extractor = {
-                ".pdf": extract_pdf,
-                ".pptx": extract_pptx,
-                ".png": extract_image,
-                ".jpg": extract_image,
-                ".jpeg": extract_image,
-            }.get(resource.extension)
-            if extractor is None:
-                raise ValueError("This material type is not supported.")
-            content = extractor(path, ocr_factory(), report_progress)
+            if resource.extension == ".youtube":
+                if not resource.source_url:
+                    raise ValueError("The YouTube source link is missing.")
+                video_id = parse_youtube_url(resource.source_url).video_id
+                content = caption_factory().fetch(video_id)
+                report_progress(len(content), len(content))
+            else:
+                path = upload_dir / resource.stored_filename
+                if not path.is_file():
+                    raise OSError("The uploaded material file is missing.")
+                extractor = {
+                    ".pdf": extract_pdf,
+                    ".pptx": extract_pptx,
+                    ".png": extract_image,
+                    ".jpg": extract_image,
+                    ".jpeg": extract_image,
+                }.get(resource.extension)
+                if extractor is None:
+                    raise ValueError("This material type is not supported.")
+                content = extractor(path, ocr_factory(), report_progress)
 
         if not any(item["has_text"] for item in content):
             unit_name = {".pdf": "pages", ".pptx": "slides"}.get(
@@ -100,7 +119,7 @@ def process_next_job(
                 embeddings=embeddings,
             )
         store.complete_job(job.job_id)
-    except OCRUnavailableError as error:
+    except (OCRUnavailableError, YouTubeTranscriptError) as error:
         store.fail_job(
             job.job_id,
             job.resource_id,

@@ -34,6 +34,10 @@ class MaterialInfo(StrictModel):
     error: str | None = None
 
 
+class YouTubeImportRequest(StrictModel):
+    url: str = Field(min_length=1, max_length=2_000)
+
+
 class Citation(StrictModel):
     source_id: str = Field(min_length=1)
     source_type: SourceType

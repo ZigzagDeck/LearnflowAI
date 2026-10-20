@@ -10,7 +10,13 @@ from .resource_store import ChunkSearchHit, ResourceStore
 
 def _to_retrieval_hit(match: ChunkSearchHit, score: float | None = None) -> RetrievalHit:
     chunk = match.chunk
-    provenance = {chunk.reference_type: chunk.reference_number}
+    if chunk.source_type == SourceType.VIDEO.value:
+        provenance = {
+            "start_seconds": chunk.start_seconds,
+            "end_seconds": chunk.end_seconds,
+        }
+    else:
+        provenance = {chunk.reference_type: chunk.reference_number}
     return RetrievalHit(
         citation=Citation(
             source_id=chunk.resource_id,
@@ -48,8 +54,19 @@ class SQLiteLexicalRetriever:
     async def retrieve_video(
         self, question: str, video_source_id: str, playback_seconds: float
     ) -> list[RetrievalHit]:
-        # Timestamped transcript chunks arrive in the dedicated video milestone.
-        return []
+        matches = self.store.search_chunks(
+            question,
+            [video_source_id],
+            CHUNKING_PIPELINE_VERSION,
+            limit=50,
+        )
+        return [
+            _to_retrieval_hit(match)
+            for match in matches
+            if match.chunk.source_type == SourceType.VIDEO.value
+            and match.chunk.end_seconds is not None
+            and match.chunk.end_seconds <= playback_seconds
+        ][: self.limit]
 
 
 @dataclass(frozen=True)
@@ -110,5 +127,40 @@ class SQLiteHybridRetriever:
     async def retrieve_video(
         self, question: str, video_source_id: str, playback_seconds: float
     ) -> list[RetrievalHit]:
-        return []
+        candidate_limit = 50
+        lexical = self.store.search_chunks(
+            question,
+            [video_source_id],
+            CHUNKING_PIPELINE_VERSION,
+            limit=candidate_limit,
+        )
+        try:
+            query_vector = self.embedder.embed_query(question)
+            dense = self.store.search_embeddings(
+                query_vector,
+                [video_source_id],
+                CHUNKING_PIPELINE_VERSION,
+                self.embedder.model_name,
+                limit=candidate_limit,
+            )
+        except EmbeddingUnavailableError:
+            dense = []
+
+        matches: dict[str, ChunkSearchHit] = {}
+        scores: dict[str, float] = {}
+        for results in (lexical, dense):
+            for rank, match in enumerate(results, start=1):
+                chunk = match.chunk
+                if (
+                    chunk.source_type != SourceType.VIDEO.value
+                    or chunk.end_seconds is None
+                    or chunk.end_seconds > playback_seconds
+                ):
+                    continue
+                matches[chunk.chunk_id] = match
+                scores[chunk.chunk_id] = scores.get(chunk.chunk_id, 0.0) + (
+                    1.0 / (self.fusion_constant + rank)
+                )
+        ranked = sorted(scores, key=lambda item: (-scores[item], item))[: self.limit]
+        return [_to_retrieval_hit(matches[item], scores[item]) for item in ranked]
 

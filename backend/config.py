@@ -54,6 +54,13 @@ VOYAGE_EMBEDDING_BATCH_SIZE = max(
 VOYAGE_MONTHLY_TOKEN_LIMIT = max(
     1, int(os.getenv("LEARNFLOW_VOYAGE_MONTHLY_TOKEN_LIMIT", "10000000"))
 )
+YOUTUBE_TRANSCRIPT_LANGUAGES = tuple(
+    language.strip()
+    for language in os.getenv(
+        "LEARNFLOW_YOUTUBE_TRANSCRIPT_LANGUAGES", "en,en-US,en-GB,hi"
+    ).split(",")
+    if language.strip()
+)
 OCR_PROVIDER = os.getenv("LEARNFLOW_OCR_PROVIDER", "google_document_ai").strip()
 OCR_LOCAL_FALLBACK_ENABLED = _environment_flag(
     "LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED"
@@ -71,7 +78,9 @@ GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT = max(
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv(
     "LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON", ""
 ).strip()
-EXTRACTION_PIPELINE_VERSION = f"native-{OCR_PROVIDER}-selective-v2"
+EXTRACTION_PIPELINE_VERSION = (
+    f"native-{OCR_PROVIDER}-selective-v2+youtube-captions-v1"
+)
 CHUNKING_PIPELINE_VERSION = "semantic-boundary-v1"
 _embedding_version_name = (
     f"{VOYAGE_EMBEDDING_MODEL}-{VOYAGE_EMBEDDING_DIMENSIONS}"

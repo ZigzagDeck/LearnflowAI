@@ -22,6 +22,8 @@ class NormalizedChunk:
     text: str
     extraction_method: str
     chunk_version: str
+    start_seconds: float | None = None
+    end_seconds: float | None = None
 
     def public_dict(self) -> dict[str, object]:
         return {
@@ -34,6 +36,8 @@ class NormalizedChunk:
             "text": self.text,
             "extraction_method": self.extraction_method,
             "chunk_version": self.chunk_version,
+            "start_seconds": self.start_seconds,
+            "end_seconds": self.end_seconds,
         }
 
 
@@ -133,6 +137,9 @@ def build_chunks(
     chunk_version: str,
 ) -> list[NormalizedChunk]:
     """Create deterministic chunks while retaining page/slide/image provenance."""
+    if source_type == "video":
+        return _build_video_chunks(resource_id, content, chunk_version)
+
     expected_reference = {"pdf": "page", "pptx": "slide", "image": "image"}.get(
         source_type
     )
@@ -168,5 +175,73 @@ def build_chunks(
                     chunk_version=chunk_version,
                 )
             )
+    return chunks
+
+
+def _build_video_chunks(
+    resource_id: str,
+    content: list[dict[str, object]],
+    chunk_version: str,
+) -> list[NormalizedChunk]:
+    """Pack adjacent caption segments while preserving exact time boundaries."""
+    chunks: list[NormalizedChunk] = []
+    pending_text: list[str] = []
+    pending_start: float | None = None
+    pending_end: float | None = None
+
+    def flush() -> None:
+        nonlocal pending_text, pending_start, pending_end
+        text = " ".join(pending_text).strip()
+        if not text or pending_start is None or pending_end is None:
+            return
+        chunk_index = len(chunks) + 1
+        identity = (
+            f"{resource_id}\0{chunk_version}\0timestamp\0{pending_start:.3f}\0"
+            f"{pending_end:.3f}\0{chunk_index}\0{text}"
+        )
+        chunks.append(
+            NormalizedChunk(
+                chunk_id=sha256(identity.encode("utf-8")).hexdigest()[:32],
+                resource_id=resource_id,
+                source_type="video",
+                reference_type="timestamp",
+                reference_number=chunk_index,
+                chunk_index=chunk_index,
+                text=text,
+                extraction_method="youtube_captions",
+                chunk_version=chunk_version,
+                start_seconds=pending_start,
+                end_seconds=pending_end,
+            )
+        )
+        pending_text = []
+        pending_start = None
+        pending_end = None
+
+    previous_start = 0.0
+    for segment in content:
+        text = _normalize_text(str(segment.get("text", "")))
+        start = segment.get("start_seconds")
+        end = segment.get("end_seconds")
+        if (
+            not text
+            or not isinstance(start, (int, float))
+            or isinstance(start, bool)
+            or not isinstance(end, (int, float))
+            or isinstance(end, bool)
+            or start < 0
+            or end < start
+            or start < previous_start
+        ):
+            raise ValueError("Transcript content has invalid timestamp provenance.")
+        proposed = " ".join([*pending_text, text])
+        if pending_text and len(proposed) > MAX_CHUNK_CHARACTERS:
+            flush()
+        if pending_start is None:
+            pending_start = float(start)
+        pending_end = float(end)
+        pending_text.append(text)
+        previous_start = float(start)
+    flush()
     return chunks
 

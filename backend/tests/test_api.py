@@ -61,6 +61,26 @@ def test_health_check(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_youtube_link_is_validated_canonicalized_and_queued(client):
+    response = client.post(
+        "/materials/youtube",
+        json={"url": "https://youtu.be/dQw4w9WgXcQ"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["source_type"] == "video"
+    assert response.json()["source_url"] == (
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
+    assert response.json()["processing_job"]["status"] == "queued"
+
+    rejected = client.post(
+        "/materials/youtube",
+        json={"url": "https://example.com/watch?v=dQw4w9WgXcQ"},
+    )
+    assert rejected.status_code == 422
+
+
 def test_ocr_usage_reports_local_monthly_counter(client):
     response = client.get("/usage/ocr")
 

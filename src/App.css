@@ -39,6 +39,8 @@ h2 { margin-bottom: 0; color: #1e3830; font-size: 20px; letter-spacing: -0.5px; 
 .upload-button:hover { background: #1e6858; transform: translateY(-1px); }
 .upload-button span { margin-right: 5px; font-size: 18px; vertical-align: -1px; }
 .file-note { margin: 12px 0 0; color: #87a398; text-align: center; font-size: 11px; }
+.source-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 10px; color: #91a79c; font-size: 10px; text-transform: uppercase; }.source-divider::before, .source-divider::after { content: ''; flex: 1; height: 1px; background: #dbe9e1; }
+.youtube-row { display: flex; gap: 8px; }.youtube-row input { min-width: 0; flex: 1; padding: 10px 11px; color: #3f6155; background: rgba(255,255,255,.75); border: 1px solid #b9d5c7; border-radius: 7px; font-size: 11px; }.youtube-row input:focus { outline: 2px solid rgba(79,155,131,.2); border-color: #69a98f; }.youtube-row button { padding: 0 13px; color: #fff; background: #4f9b83; border: 0; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 600; }.youtube-row button:disabled { cursor: default; opacity: .65; }
 .drop-zone { padding: 14px 12px 10px; border: 1px dashed #a8cdbc; border-radius: 10px; text-align: center; }
 .file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .drop-hint { margin: 8px 0 0; color: #739588; font-size: 11px; }

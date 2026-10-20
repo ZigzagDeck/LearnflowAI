@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
+from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
     DATABASE_PATH,
@@ -36,6 +37,7 @@ from .resource_store import (
     ResourceStore,
     ResourceStoreError,
 )
+from .youtube_ingestion import parse_youtube_url
 
 
 app = FastAPI(title="LearnFlow AI API")
@@ -106,6 +108,7 @@ def material_payload(
         "status": record.status,
         "deduplicated": deduplicated,
         "processing_job": job.public_dict() if job else None,
+        "source_url": record.source_url,
     }
 
 
@@ -274,6 +277,42 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
     finally:
         await file.close()
 
+    return material_payload(record, job=job)
+
+
+@app.post("/materials/youtube")
+def import_youtube_material(payload: YouTubeImportRequest) -> dict[str, object]:
+    try:
+        reference = parse_youtube_url(payload.url)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    content_hash = hashlib.sha256(reference.canonical_url.encode("utf-8")).hexdigest()
+    try:
+        store = get_resource_store()
+        existing = store.find_by_hash(content_hash)
+        if existing is not None:
+            job = store.enqueue_extraction(
+                existing.resource_id, PROCESSING_PIPELINE_VERSION
+            )
+            return material_payload(existing, job=job, deduplicated=True)
+
+        resource_id = uuid.uuid4().hex
+        record, _ = store.create(
+            resource_id=resource_id,
+            original_filename=f"YouTube video {reference.video_id}",
+            stored_filename=f"youtube-{reference.video_id}",
+            source_type="video",
+            extension=".youtube",
+            content_hash=content_hash,
+            size_bytes=len(reference.canonical_url.encode("utf-8")),
+            source_url=reference.canonical_url,
+        )
+        job = store.enqueue_extraction(record.resource_id, PROCESSING_PIPELINE_VERSION)
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Local resource metadata storage is unavailable."
+        ) from error
     return material_payload(record, job=job)
 
 

@@ -39,6 +39,7 @@ class ResourceRecord:
     extraction_version: str | None
     created_at: str
     updated_at: str
+    source_url: str | None = None
 
     def public_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -127,6 +128,10 @@ class ResourceStore:
                 connection.execute(
                     "ALTER TABLE resources ADD COLUMN extraction_version TEXT"
                 )
+            if "source_url" not in columns:
+                connection.execute(
+                    "ALTER TABLE resources ADD COLUMN source_url TEXT"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_resources_updated_at "
                 "ON resources(updated_at DESC)"
@@ -181,6 +186,8 @@ class ResourceStore:
                     text TEXT NOT NULL CHECK (length(text) > 0),
                     extraction_method TEXT NOT NULL,
                     chunk_version TEXT NOT NULL,
+                    start_seconds REAL,
+                    end_seconds REAL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(resource_id) REFERENCES resources(resource_id)
                         ON DELETE CASCADE,
@@ -208,6 +215,14 @@ class ResourceStore:
                 )
                 """
             )
+            chunk_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(chunks)").fetchall()
+            }
+            if "start_seconds" not in chunk_columns:
+                connection.execute("ALTER TABLE chunks ADD COLUMN start_seconds REAL")
+            if "end_seconds" not in chunk_columns:
+                connection.execute("ALTER TABLE chunks ADD COLUMN end_seconds REAL")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model "
                 "ON chunk_embeddings(model_name)"
@@ -251,6 +266,7 @@ class ResourceStore:
             extraction_version=row["extraction_version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            source_url=row["source_url"],
         )
 
     @staticmethod
@@ -284,6 +300,8 @@ class ResourceStore:
             text=row["text"],
             extraction_method=row["extraction_method"],
             chunk_version=row["chunk_version"],
+            start_seconds=row["start_seconds"],
+            end_seconds=row["end_seconds"],
         )
 
     def find_by_hash(self, content_hash: str) -> ResourceRecord | None:
@@ -327,6 +345,7 @@ class ResourceStore:
         extension: str,
         content_hash: str,
         size_bytes: int,
+        source_url: str | None = None,
     ) -> tuple[ResourceRecord, bool]:
         now = datetime.now(UTC).isoformat()
         try:
@@ -338,8 +357,8 @@ class ResourceStore:
                             resource_id, original_filename, stored_filename,
                             source_type, extension, content_hash, size_bytes,
                             status, error, extraction_json, extraction_version,
-                            created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, NULL, ?, ?)
+                            created_at, updated_at, source_url
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, NULL, ?, ?, ?)
                         """,
                         (
                             resource_id,
@@ -351,6 +370,7 @@ class ResourceStore:
                             size_bytes,
                             now,
                             now,
+                            source_url,
                         ),
                     )
                     created = True
@@ -516,8 +536,8 @@ class ResourceStore:
             INSERT INTO chunks (
                 chunk_id, resource_id, source_type, reference_type,
                 reference_number, chunk_index, text, extraction_method,
-                chunk_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                chunk_version, start_seconds, end_seconds, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -530,6 +550,8 @@ class ResourceStore:
                     chunk.text,
                     chunk.extraction_method,
                     chunk.chunk_version,
+                    chunk.start_seconds,
+                    chunk.end_seconds,
                     created_at,
                 )
                 for chunk in chunks
