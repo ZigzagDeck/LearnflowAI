@@ -5,6 +5,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - A React + TypeScript + Vite frontend
 - A Python + FastAPI backend with health, local material-upload, and extraction endpoints
 - Local OCR enrichment for PDF pages, PPTX embedded images, and standalone PNG/JPEG images
+- A local SQLite resource registry with content-hash deduplication and cached extraction results
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
 End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
@@ -15,6 +16,7 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `backend/` - The Python API. `main.py` defines the FastAPI application, CORS settings, validation, upload, and extraction endpoints.
 - `backend/extraction.py` - PyMuPDF and python-pptx extraction with OCR enrichment and page/slide/image provenance.
 - `backend/ocr.py` - Lazy local RapidOCR adapter backed by ONNX Runtime.
+- `backend/resource_store.py` - SQLite metadata, status, SHA-256 deduplication, and versioned extraction cache.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
 - `package.json` - Frontend commands and JavaScript dependencies.
@@ -22,6 +24,8 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `.env.example` - Safe placeholder names for future configuration. It contains no real secrets.
 
 The upload endpoint currently accepts PDF, PPTX, PNG, JPG, and JPEG files up to 100 MB by default. The UI intentionally lists only formats that can be processed now. Set `LEARNFLOW_MAX_UPLOAD_SIZE_MB` before starting the backend to change that development limit.
+
+Exact duplicate uploads reuse the existing resource and stored file. Extraction results are cached with a pipeline version, so unchanged resources do not repeat OCR while future extractor upgrades can invalidate stale results safely. Metadata is stored in `backend/data/learnflow.db` by default; override it with `LEARNFLOW_DATABASE_PATH`.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. The default processing timeout is 180 seconds and can be changed with `LEARNFLOW_EXTRACTION_TIMEOUT_SECONDS`. OCR is CPU-intensive; background processing is still required before large documents should be treated as production-ready.
 
@@ -107,6 +111,13 @@ The frontend calls:
 
 ```text
 POST http://localhost:8000/materials/{stored_filename}/extract
+```
+
+Resource metadata and processing status are available from:
+
+```text
+GET http://localhost:8000/materials
+GET http://localhost:8000/materials/{resource_id}/status
 ```
 
 Use the safe `stored_filename` returned by the upload endpoint; do not send a local filesystem path. The extraction endpoint returns structured records with `reference_type`, `reference_number`, merged `text`, separate `native_text` and `ocr_text`, `ocr_applied`, `extraction_method`, and `has_text`. It rejects invalid identifiers, missing files, unsupported formats, empty documents, and extraction failures.

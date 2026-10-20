@@ -80,7 +80,9 @@ function App() {
         setStatus('success')
         setProgress(100)
         setUploadedDocumentId(response.stored_filename)
-        setMessage('Uploaded securely. You can now process its text and images.')
+        setMessage(response.deduplicated
+          ? 'This material already exists. Its saved processing result will be reused.'
+          : 'Uploaded securely. You can now process its text and images.')
       } else {
         let detail = 'The upload could not be completed. Please try again.'
         try {
@@ -119,7 +121,9 @@ function App() {
       setExtractionStatus('success')
       const extension = fileExtension(selectedFile.name)
       const units = extension === '.pdf' ? 'pages' : extension === '.pptx' ? 'slides' : 'image'
-      setExtractionMessage(`Processed ${payload.content.length} ${units} with text extraction and OCR.`)
+      setExtractionMessage(payload.cached
+        ? `Loaded the saved result for ${payload.content.length} ${units}; OCR was not repeated.`
+        : `Processed ${payload.content.length} ${units} with text extraction and OCR.`)
     } catch (error) {
       setExtractionStatus('error')
       setExtractionMessage(error instanceof Error ? error.message : 'The text could not be extracted.')

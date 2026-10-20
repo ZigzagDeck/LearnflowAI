@@ -7,9 +7,14 @@ already implemented. Provider and chat routes arrive in subsequent PRs.
 
 - `GET /health` returns `{"status":"ok"}`.
 - `POST /materials/upload` accepts multipart `file` and returns
-  `stored_filename` (legacy upload ID).
+  `stored_filename` (legacy upload ID), stable `resource_id`, processing
+  `status`, and `deduplicated`. Exact duplicate content reuses the existing
+  resource and stored file.
 - `POST /materials/{document_id}/extract` returns content records:
-  `reference_type`, `reference_number`, `text`, `has_text`.
+  `reference_type`, `reference_number`, `text`, `has_text`, extraction
+  provenance, and `cached` at the response level.
+- `GET /materials` lists locally registered resources.
+- `GET /materials/{resource_id}/status` returns persisted processing status.
 
 These endpoints must remain backwards-compatible.
 

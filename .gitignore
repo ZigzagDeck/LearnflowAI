@@ -17,6 +17,7 @@ __pycache__/
 .pytest_cache/
 dist-ssr
 backend/uploads/
+backend/data/
 
 # Editor directories and files
 .vscode/*

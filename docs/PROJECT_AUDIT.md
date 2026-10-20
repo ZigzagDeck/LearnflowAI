@@ -22,14 +22,14 @@ AWS constraint: Amazon Bedrock only. Storage, OCR, transcription, retrieval, job
 | Chat API | `/chat` router is now registered and fails closed when integrations are absent | `backend/chat_api.py`, `backend/main.py` | API tests pass | Real authorizer, retriever, Bedrock provider, frontend |
 | Model provider | Generic OpenAI-compatible adapter exists | `backend/llm_provider.py` | Mock tests pass | Replace/wrap with a Bedrock Runtime Converse provider; no live AWS test yet |
 | Quiz | Strict request/question/response models | `backend/contracts.py` | Validation tests pass | Retrieval-backed service, API, scoring boundary, frontend |
-| Persistence | Uploaded files only, ignored by Git | `backend/uploads/`, `.gitignore` | Local upload tests pass | SQLite metadata/jobs/content/chunks and restart-safe state |
-| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 57 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
+| Persistence | Local files plus SQLite resource metadata, status, hashes, and versioned extraction cache | `backend/uploads/`, `backend/resource_store.py` | Persistence, deduplication, cache, and API tests pass | Job/chunk tables, ownership, cleanup policy |
+| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 63 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
 
 ## Current data flow and diagnosis
 
-The working flow is browser selection/drop → multipart upload → local file validation → random stored filename → synchronous extraction/OCR → page/slide/image records → transient rendering in React.
+The working flow is browser selection/drop → multipart upload and streaming SHA-256 → local file validation → SQLite resource registration/deduplication → versioned cache lookup → synchronous extraction/OCR when needed → cached page/slide/image records → rendering in React.
 
-The strongest existing design work is in the strict citation contracts and the fail-closed chat coordinator. The main architectural gaps are that uploads have no durable metadata record, extraction is synchronous and not cached, source IDs are only stored filenames, and the chat abstractions are not connected to real ingestion or retrieval. The generic model adapter is not a Bedrock adapter. There is no implemented video flow, resource library, quiz service, or authenticated ownership model.
+The strongest existing design work is in the strict citation contracts, fail-closed chat coordinator, and now the durable resource/cache boundary. The main architectural gaps are that extraction is still synchronous, resource ownership is not authenticated, and chat abstractions are not connected to real ingestion or retrieval. The generic model adapter is not a Bedrock adapter. There is no implemented video flow, resource library UI, or quiz service.
 
 OCR now prevents image text from being silently skipped, but OCR alone cannot infer arrows, layout relationships, chart meaning, or algorithm flow. A Bedrock multimodal enrichment record must remain distinct from literal native/OCR text and retain the same page, slide, or image reference.
 
@@ -56,12 +56,12 @@ For small corpora, Sentence Transformers documents direct semantic search as pra
 ## Prioritized roadmap
 
 1. **Reliable multimodal document ingestion (first slice complete).** PDF native+OCR, PPTX image OCR, standalone images, provenance, aligned UI formats, and passing tests.
-2. **Durable resource registry and cache.** Complete when SHA-256 deduplication, SQLite resource/status records, cached extraction JSON, and resource listing survive a restart.
-3. **Local background worker.** Complete when upload returns quickly, processing status is pollable, failures are retryable, and interrupted work can resume.
+2. **Durable resource registry and cache (complete).** SHA-256 deduplication, SQLite resource/status records, versioned extraction JSON, listing/status APIs, and restart-safe tests are implemented.
+3. **Local background worker (next).** Complete when upload returns quickly, processing status is pollable, failures are retryable, and interrupted work can resume.
 4. **Normalized chunks and hybrid index.** Complete when page/slide/image metadata survives chunking and an evaluation set proves filtered dense+FTS retrieval finds known evidence.
 5. **Bedrock text and vision integration.** Complete when one configured model answers only from retrieved evidence, selected visual pages get clearly marked model-derived descriptions, usage is logged without content/secrets, and spend limits are documented.
 6. **Grounded chat UI.** Complete when users select resources, receive insufficient-evidence responses, and open exact citations.
-7. **Local video ingestion.** Complete when supported videos produce real timestamped faster-whisper segments through the same job/index pipeline; only then re-enable video formats in the UI.
+7. **Local video and authorized YouTube ingestion.** Complete when supported uploads produce real timestamped faster-whisper segments, YouTube links support embedded playback plus authorized captions/transcripts, and citations seek to exact timestamps. Arbitrary YouTube audiovisual downloading is not a dependable core path.
 8. **Grounded quizzes.** Complete when validated MCQs cite retrievable evidence and scoring does not expose answers prematurely.
 9. **Evaluation and demo hardening.** Complete when real PDF/PPTX/image/video fixtures measure extraction, retrieval, citation accuracy, latency, failures, and Bedrock cost for the final demo volume.
 

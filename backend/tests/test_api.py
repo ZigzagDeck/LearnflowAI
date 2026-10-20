@@ -68,6 +68,58 @@ def test_upload_and_extract_pptx_with_slide_reference(client):
     assert "Machine Learning Basics" in result.json()["content"][0]["text"]
 
 
+def test_duplicate_upload_reuses_existing_resource(client, tmp_path):
+    content = make_pdf()
+    first = upload(client, "lecture.pdf", content)
+    second = upload(client, "renamed-copy.pdf", content)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["deduplicated"] is True
+    assert second.json()["resource_id"] == first.json()["resource_id"]
+    assert second.json()["stored_filename"] == first.json()["stored_filename"]
+    assert len(list(tmp_path.glob("*.pdf"))) == 1
+
+
+def test_extraction_result_is_cached(client, monkeypatch):
+    class CountingOCR:
+        calls = 0
+
+        def read_text(self, image):
+            self.calls += 1
+            return ""
+
+    ocr = CountingOCR()
+    monkeypatch.setattr(backend_main, "get_ocr_reader", lambda: ocr)
+    response = upload(client, "lecture.pdf", make_pdf())
+    identifier = response.json()["stored_filename"]
+
+    first = client.post(f"/materials/{identifier}/extract")
+    second = client.post(f"/materials/{identifier}/extract")
+
+    assert first.status_code == 200
+    assert first.json()["cached"] is False
+    assert second.status_code == 200
+    assert second.json()["cached"] is True
+    assert second.json()["content"] == first.json()["content"]
+    assert ocr.calls == 1
+
+
+def test_material_list_and_status_are_persisted(client):
+    response = upload(client, "lecture.pdf", make_pdf())
+    resource_id = response.json()["resource_id"]
+
+    listing = client.get("/materials")
+    status = client.get(f"/materials/{resource_id}/status")
+
+    assert listing.status_code == 200
+    assert listing.json()["materials"][0]["resource_id"] == resource_id
+    assert status.status_code == 200
+    assert status.json()["original_filename"] == "lecture.pdf"
+    assert status.json()["status"] == "uploaded"
+    assert "content_hash" not in status.json()
+
+
 def test_unsupported_upload_type_is_rejected(client, tmp_path):
     response = upload(client, "malware.exe", b"not a supported type")
     assert response.status_code == 415
