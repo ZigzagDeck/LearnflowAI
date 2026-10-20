@@ -410,7 +410,7 @@ class ResourceStore:
                 updated = current + units
                 if updated > monthly_limit:
                     raise MonthlyUsageLimitError(
-                        f"The configured {monthly_limit}-page monthly OCR limit "
+                        f"The configured monthly usage limit for {provider} "
                         "has been reached."
                     )
                 connection.execute(

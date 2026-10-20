@@ -200,7 +200,10 @@ class GoogleDocumentAIOCRReader:
                 response.raise_for_status()
                 payload = response.json()
             except MonthlyUsageLimitError as exc:
-                raise OCRUnavailableError(str(exc)) from exc
+                raise OCRUnavailableError(
+                    f"The configured {self.monthly_page_limit}-page monthly OCR "
+                    "limit has been reached."
+                ) from exc
             except ResourceStoreError as exc:
                 raise OCRUnavailableError(
                     "Google OCR usage tracking is unavailable; no request was sent."

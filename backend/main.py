@@ -14,6 +14,7 @@ from .chat_api import router as chat_router
 from .config import (
     CHUNKING_PIPELINE_VERSION,
     DATABASE_PATH,
+    EMBEDDING_PROVIDER,
     EXTRACTION_PIPELINE_VERSION,
     GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT,
     MAX_UPLOAD_SIZE_BYTES,
@@ -21,7 +22,11 @@ from .config import (
     OCR_PROVIDER,
     PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
+    VOYAGE_EMBEDDING_DIMENSIONS,
+    VOYAGE_EMBEDDING_MODEL,
+    VOYAGE_MONTHLY_TOKEN_LIMIT,
 )
+from .embeddings import VOYAGE_USAGE_PROVIDER_KEY
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
 from .ocr import GOOGLE_OCR_PROVIDER_KEY
@@ -134,6 +139,30 @@ def ocr_usage() -> dict[str, object]:
             GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT
             if OCR_PROVIDER == "google_document_ai"
             else None
+        ),
+    }
+
+
+@app.get("/usage/embeddings")
+def embedding_usage() -> dict[str, object]:
+    try:
+        period, used_units = get_resource_store().current_monthly_usage(
+            VOYAGE_USAGE_PROVIDER_KEY
+        )
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Embedding usage tracking is unavailable."
+        ) from error
+    return {
+        "provider": EMBEDDING_PROVIDER,
+        "model": VOYAGE_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "voyage" else None,
+        "dimensions": (
+            VOYAGE_EMBEDDING_DIMENSIONS if EMBEDDING_PROVIDER == "voyage" else None
+        ),
+        "period": period,
+        "used_conservative_token_units": used_units,
+        "monthly_token_unit_limit": (
+            VOYAGE_MONTHLY_TOKEN_LIMIT if EMBEDDING_PROVIDER == "voyage" else None
         ),
     }
 

@@ -4,7 +4,7 @@ Audit date: 2026-10-20
 
 Branch: `vm`
 
-Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Document AI is approved for bounded OCR requests; storage, transcription, retrieval, jobs, and metadata remain local.
+Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Document AI is approved for bounded OCR requests and Voyage AI for bounded embeddings; storage, transcription, retrieval, jobs, and metadata remain local.
 
 ## Actual implementation status
 
@@ -18,12 +18,12 @@ Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Docume
 | Image ingestion | Safe PNG/JPEG validation and OCR with image reference | `backend/image_utils.py`, `backend/file_validation.py`, `backend/extraction.py` | Upload/extract API tests pass | Visual-semantic descriptions and broader image formats only if justified |
 | OCR | Google Enterprise Document OCR with inline bytes, selective visual/scanned-page routing, a local 1,000-page monthly cap, and opt-in RapidOCR fallback | `backend/ocr.py`, `backend/extraction.py`, `backend/worker.py` | Mock transport, cap, fallback, provenance, and routing tests pass without cloud calls | Live credential smoke test and OCR quality evaluation set |
 | Video | Contracts contain timestamp citation fields | `backend/contracts.py`, `backend/chat_service.py` | Contract tests pass | Upload, FFmpeg audio extraction, transcription, segment persistence, UI |
-| RAG | Strict retrieval-hit/citation contracts, deterministic citation chunks, allow-list-filtered SQLite FTS5/BM25, compact local embeddings, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Chunk, provenance, lexical/dense filtering, hybrid citation-adapter, persistence, and service tests pass | Ownership/authorization adapter and evaluation set |
+| RAG | Strict citation chunks, allow-list-filtered SQLite FTS5/BM25, guarded Voyage embeddings with local fallback, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Voyage transport/limit, local fallback, lexical/dense filtering, hybrid citation, persistence, and service tests pass without cloud calls | Live credential smoke test, ownership adapter, and evaluation set |
 | Chat API | `/chat` router is now registered and fails closed when integrations are absent | `backend/chat_api.py`, `backend/main.py` | API tests pass | Real authorizer, retriever, Bedrock provider, frontend |
 | Model provider | Generic OpenAI-compatible adapter exists | `backend/llm_provider.py` | Mock tests pass | Replace/wrap with a Bedrock Runtime Converse provider; no live AWS test yet |
 | Quiz | Strict request/question/response models | `backend/contracts.py` | Validation tests pass | Retrieval-backed service, API, scoring boundary, frontend |
 | Persistence | Local files plus SQLite resource metadata, status, hashes, versioned extraction cache, durable jobs, and normalized chunks | `backend/uploads/`, `backend/resource_store.py` | Persistence, deduplication, cache, chunks, jobs, progress, retry, and recovery tests pass | Ownership and cleanup policy |
-| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 86 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
+| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 90 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
 
 ## Current data flow and diagnosis
 
@@ -44,12 +44,12 @@ OCR now prevents image text from being silently skipped, but OCR alone cannot in
 | Metadata/cache | SQLite + content-addressed local files | Mandatory next | Durable, cheap, simple, supports hashes/status/jobs without a managed database |
 | Background processing | Dedicated local Python worker over a SQLite job table | Mandatory before large resources | Restart-safe processing without Redis or a cloud queue; keep web requests short |
 | Chunking | Small in-repository semantic-boundary chunker | Mandatory | Paragraph/heading/slide/transcript-aware behavior without a framework dependency |
-| Embeddings | FastEmbed/ONNX with `BAAI/bge-small-en-v1.5` | Mandatory/current | Local asymmetric embeddings without loading PyTorch; lazy, CPU-only, one-thread execution with a memory guard |
+| Embeddings | Voyage `voyage-4-lite` at 256 dimensions; optional FastEmbed fallback | Mandatory/current | Cloud inference is the low-RAM default; local fallback remains lazy, CPU-only, one-threaded, and memory-guarded |
 | Dense retrieval | Normalized float32 vectors in SQLite with bounded exact cosine scan | Mandatory/current | Avoids another compiled index and resident copy while the hackathon corpus is small |
 | Lexical retrieval | SQLite FTS5/BM25 | Mandatory for hybrid RAG | No extra service; strong exact-term search beside semantic retrieval |
 | Reranking | None initially | Optional | Add a local cross-encoder only if the evaluation set shows a useful gain |
 | LLM/quiz generation | Bedrock Runtime Converse via `boto3`, validated with Pydantic | Mandatory later | One AWS integration, one request interface, structured grounded outputs |
-| Storage/cloud services | Local disk + SQLite; Bedrock and bounded Google Document AI calls only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, CloudWatch, or Google Cloud Storage |
+| Storage/cloud services | Local disk + SQLite; Bedrock, bounded Google OCR, and bounded Voyage embeddings only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, CloudWatch, or Google Cloud Storage |
 
 For small corpora, Sentence Transformers documents direct semantic search as practical, so the current SQLite scan avoids a second index dependency. Bedrock Converse accepts raw image bytes for supported multimodal models, so S3 is not required for diagram analysis.
 
@@ -79,4 +79,6 @@ The first slice adds two runtime dependencies (`rapidocr`, `onnxruntime`), keeps
 - [faster-whisper repository](https://github.com/SYSTRAN/faster-whisper)
 - [Sentence Transformers semantic-search documentation](https://www.sbert.net/examples/sentence_transformer/applications/semantic-search/README.html)
 - [FastEmbed documentation](https://qdrant.github.io/fastembed/Getting%20Started/)
+- [Voyage text embeddings](https://docs.voyageai.com/docs/embeddings)
+- [Voyage pricing](https://docs.voyageai.com/docs/pricing)
 - [Amazon Bedrock Runtime Converse API](https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime/client/converse.html)

@@ -10,7 +10,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Automatic UI polling, per-page/slide progress, failure details, and explicit retry
 - Deterministic semantic-boundary chunks that preserve exact page/slide/image citations
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
-- Memory-guarded local ONNX embeddings and SQLite lexical/dense rank fusion
+- Guarded Voyage AI embeddings with SQLite lexical/dense rank fusion
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
 End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
@@ -25,7 +25,7 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `backend/processing.py` - One-job-at-a-time extraction coordinator with durable progress and safe failures.
 - `backend/worker.py` - Local queue worker; it is the only process that loads the OCR model.
 - `backend/chunking.py` - Dependency-free text normalization and bounded, overlapping citation chunks.
-- `backend/embeddings.py` - Lazy, CPU-only FastEmbed adapter with a free-memory safety check.
+- `backend/embeddings.py` - Guarded Voyage REST adapter and opt-in local FastEmbed fallback.
 - `backend/retrieval.py` - Citation-valid lexical and hybrid retrievers for grounded chat.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
@@ -41,7 +41,9 @@ The worker also converts each page, slide, or image record into normalized chunk
 
 SQLite FTS5 and normalized `float32` embeddings are written in the same transaction as each resource's chunks. Searches apply the resource allow-list inside both lexical and dense SQL queries. The hybrid adapter combines BM25 and semantic ranks with reciprocal-rank fusion and returns strict `RetrievalHit`/`Citation` contracts. Dense search is an exact, streaming SQLite scan, which avoids a vector service or a resident FAISS index for the current hackathon-scale corpus. Chat remains fail-closed until resource ownership is connected.
 
-The embedding model is lazy: tests use four-dimensional deterministic fakes and never download or load it. On first real worker use, FastEmbed downloads `BAAI/bge-small-en-v1.5` into `backend/data/models` unless `LEARNFLOW_MODEL_CACHE_DIR` is changed. Runtime defaults are intentionally conservative: CPU only, one thread, batches of four, no ONNX CPU memory arena, and a refusal to initialize below 768 MB of currently free physical memory. These values can be adjusted with the `LEARNFLOW_EMBEDDING_*` and `LEARNFLOW_MIN_EMBEDDING_FREE_MB` settings in `.env.example`; increasing them can increase RAM usage.
+Voyage AI is the default embedding provider, using `voyage-4-lite` with 256-dimensional retrieval vectors to keep stored vectors compact. Document and query inputs use Voyage's respective retrieval input types. Requests are split into batches of at most 32 texts. A conservative local counter reserves UTF-8 byte units before each request and defaults to 10 million units per calendar month, well below Voyage's currently published free-token allowance. Inspect it at `GET /usage/embeddings`. Deleting the SQLite database resets this local guard, so configure project limits in the Voyage dashboard as a second control.
+
+FastEmbed remains an offline option. Set `LEARNFLOW_EMBEDDING_PROVIDER=fastembed` to use it directly, or explicitly enable `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true`. Local inference is disabled by default. When enabled, the local model stays CPU-only, one-threaded, small-batch, and protected by the 768 MB free-memory gate.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. Google OCR runs outside web requests in the dedicated worker and sends bounded page/image bytes directly; it does not use Google Cloud Storage. Clean, substantial native PDF text is kept locally without a paid OCR call unless the page contains raster or vector visuals. Scanned/short pages, PPTX images, and standalone images always pass through OCR. SQLite claiming guarantees that only one job runs at once. Jobs retain progress and failures across restarts; work with no update for 15 minutes is re-queued.
 
@@ -82,6 +84,21 @@ Use the exact location shown on the processor; the location is part of its ident
 
 The local SQLite counter reserves one page before every request and blocks requests beyond 1,000 pages in a calendar month by default. Inspect it at `GET /usage/ocr`. Keep a Google billing budget alert as a second guard because deleting the local database resets the local counter. RapidOCR remains available only when `LEARNFLOW_OCR_PROVIDER=rapidocr` or `LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED=true` is explicitly configured.
 
+## Configure Voyage embeddings
+
+Create a Voyage project/API key and store it only in an environment secret. Do not commit it or place it in `.env.example`.
+
+```powershell
+$env:LEARNFLOW_EMBEDDING_PROVIDER="voyage"
+$env:VOYAGE_API_KEY="your-rotated-secret-key"
+$env:LEARNFLOW_VOYAGE_EMBEDDING_MODEL="voyage-4-lite"
+$env:LEARNFLOW_VOYAGE_EMBEDDING_DIMENSIONS="256"
+$env:LEARNFLOW_VOYAGE_MONTHLY_TOKEN_LIMIT="10000000"
+$env:LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED="false"
+```
+
+For hosted deployment, configure the same values in the host's secret/environment settings. The API key must never be exposed through a `VITE_` variable because those values are compiled into browser code.
+
 If PowerShell blocks activation, you can run the backend with the virtual environment's Python directly instead:
 
 ```powershell
@@ -116,7 +133,7 @@ cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
 .\.venv\Scripts\python.exe -m backend.worker
 ```
 
-Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR uses Google Document AI, while chunking, embeddings, indexing, storage, and jobs remain local. The only AWS service planned is Bedrock.
+Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR uses Google Document AI and embeddings use Voyage AI; chunking, indexing, storage, and jobs remain local. The only AWS service planned is Bedrock.
 
 ## Test the health endpoint
 
