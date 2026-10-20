@@ -49,7 +49,9 @@ The retrieval team may provide timestamp-split chunks for better coverage.
 
 ## Not completed by this PR
 
-- Real document/video retrieval adapters or source authorization persistence
+- Dense/video retrieval adapters or source authorization persistence. A filtered
+  SQLite FTS5 document adapter now exists in `backend/retrieval.py`, but remains
+  disconnected from `/chat` until authorization is real.
 - Multi-turn chat history or session storage
 - Model-account connectivity/deployment smoke test
 - Sentence-level citation entailment and hallucination evaluation

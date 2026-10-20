@@ -3,6 +3,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+import re
 import sqlite3
 import uuid
 
@@ -63,6 +64,12 @@ class ProcessingJob:
         else:
             payload["progress_percent"] = 0
         return payload
+
+
+@dataclass(frozen=True)
+class ChunkSearchHit:
+    chunk: NormalizedChunk
+    score: float
 
 
 class ResourceStore:
@@ -169,6 +176,26 @@ class ResourceStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunks_resource_reference "
                 "ON chunks(resource_id, reference_type, reference_number, chunk_index)"
+            )
+            connection.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                    chunk_id UNINDEXED,
+                    resource_id UNINDEXED,
+                    text,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO chunks_fts (chunk_id, resource_id, text)
+                SELECT chunk_id, resource_id, text FROM chunks
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM chunks_fts
+                    WHERE chunks_fts.chunk_id = chunks.chunk_id
+                )
+                """
             )
 
     @staticmethod
@@ -308,6 +335,9 @@ class ResourceStore:
         try:
             with self._connect() as connection:
                 connection.execute(
+                    "DELETE FROM chunks_fts WHERE resource_id = ?", (resource_id,)
+                )
+                connection.execute(
                     "DELETE FROM resources WHERE resource_id = ?", (resource_id,)
                 )
         except sqlite3.Error as exc:
@@ -413,6 +443,16 @@ class ResourceStore:
                 for chunk in chunks
             ],
         )
+        connection.executemany(
+            """
+            INSERT INTO chunks_fts (chunk_id, resource_id, text)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (chunk.chunk_id, chunk.resource_id, chunk.text)
+                for chunk in chunks
+            ],
+        )
 
     def save_processed_content(
         self,
@@ -429,6 +469,9 @@ class ResourceStore:
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "DELETE FROM chunks_fts WHERE resource_id = ?", (resource_id,)
+                )
                 connection.execute(
                     "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
                 )
@@ -464,6 +507,9 @@ class ResourceStore:
                 ).fetchone()
                 if exists is None:
                     raise ResourceStoreError("Resource metadata was not found.")
+                connection.execute(
+                    "DELETE FROM chunks_fts WHERE resource_id = ?", (resource_id,)
+                )
                 connection.execute(
                     "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
                 )
@@ -504,6 +550,57 @@ class ResourceStore:
             return [self._chunk(row) for row in rows]
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not read normalized chunks.") from exc
+
+    def search_chunks(
+        self,
+        query: str,
+        allowed_resource_ids: list[str],
+        chunk_version: str,
+        *,
+        limit: int = 8,
+    ) -> list[ChunkSearchHit]:
+        """Run local BM25 search, always constrained to an explicit source allow-list."""
+        allowed_ids = list(dict.fromkeys(allowed_resource_ids))[:30]
+        if not allowed_ids or limit < 1 or limit > 50:
+            return []
+        terms = [
+            term[:64]
+            for term in dict.fromkeys(re.findall(r"[^\W_]+", query.casefold()))
+        ][:24]
+        if not terms:
+            return []
+        match_expression = " OR ".join(f'"{term}"' for term in terms)
+        placeholders = ",".join("?" for _ in allowed_ids)
+        parameters: list[object] = [
+            match_expression,
+            chunk_version,
+            *allowed_ids,
+            limit,
+        ]
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT chunks.*, bm25(chunks_fts) AS lexical_rank
+                    FROM chunks_fts
+                    JOIN chunks ON chunks.chunk_id = chunks_fts.chunk_id
+                    WHERE chunks_fts MATCH ?
+                        AND chunks.chunk_version = ?
+                        AND chunks.resource_id IN ({placeholders})
+                    ORDER BY lexical_rank ASC, chunks.chunk_id ASC
+                    LIMIT ?
+                    """,
+                    parameters,
+                ).fetchall()
+            return [
+                ChunkSearchHit(
+                    chunk=self._chunk(row),
+                    score=max(0.0, -float(row["lexical_rank"])),
+                )
+                for row in rows
+            ]
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not search normalized chunks.") from exc
 
     def cached_extraction(
         self, resource_id: str, extraction_version: str

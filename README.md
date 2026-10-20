@@ -9,6 +9,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - A restart-safe SQLite processing queue with one CPU-heavy extraction job at a time
 - Automatic UI polling, per-page/slide progress, failure details, and explicit retry
 - Deterministic semantic-boundary chunks that preserve exact page/slide/image citations
+- Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
 End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
@@ -23,6 +24,7 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `backend/processing.py` - One-job-at-a-time extraction coordinator with durable progress and safe failures.
 - `backend/worker.py` - Local queue worker; it is the only process that loads the OCR model.
 - `backend/chunking.py` - Dependency-free text normalization and bounded, overlapping citation chunks.
+- `backend/retrieval.py` - Citation-valid local lexical retriever for the grounded chat boundary.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
 - `package.json` - Frontend commands and JavaScript dependencies.
@@ -34,6 +36,8 @@ The upload endpoint currently accepts PDF, PPTX, PNG, JPG, and JPEG files up to 
 Exact duplicate uploads reuse the existing resource and stored file. Extraction results are cached with a pipeline version, so unchanged resources do not repeat OCR while future extractor upgrades can invalidate stale results safely. Metadata is stored in `backend/data/learnflow.db` by default; override it with `LEARNFLOW_DATABASE_PATH`. Uploaded files default to `backend/uploads`; override that shared API/worker path with `LEARNFLOW_UPLOAD_DIR`.
 
 The worker also converts each page, slide, or image record into normalized chunks of at most 1,200 characters with a small overlap. A chunk never crosses a citation boundary. Chunk IDs are deterministic, and the extraction plus its chunks are committed atomically to SQLite. Existing cached extraction can be backfilled into the current chunk format without loading OCR again.
+
+SQLite FTS5 indexes the normalized text in the same transaction as chunk persistence. Searches use local BM25 ranking and require an explicit resource ID allow-list in the SQL query, preventing results from an unrelated resource from entering the retrieval boundary. The lexical adapter already returns the strict `RetrievalHit`/`Citation` contracts; chat remains fail-closed until resource ownership and the final hybrid retriever are connected.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. OCR runs outside web requests in a dedicated local worker. SQLite claiming guarantees that only one heavy job runs at once, even if another worker is started. Jobs retain progress and failures across restarts; work with no update for 15 minutes is treated as interrupted and re-queued. Change that window with `LEARNFLOW_JOB_STALE_SECONDS`.
 
