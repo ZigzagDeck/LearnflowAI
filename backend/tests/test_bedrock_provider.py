@@ -107,7 +107,7 @@ def test_bedrock_mantle_uses_project_endpoint_and_tracks_usage(tmp_path):
     bedrock = BedrockProvider(
         BedrockConfig(
             region="us-east-1",
-            model_id="google.gemma-3-12b-it",
+            model_id="google.gemma-4-31b",
             api_mode="mantle_chat_completions",
             api_key="bedrock-secret",
             max_tokens=128,
@@ -120,9 +120,9 @@ def test_bedrock_mantle_uses_project_endpoint_and_tracks_usage(tmp_path):
 
     assert answer == "Mantle answer."
     assert request_data["url"] == (
-        "https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions"
+        "https://bedrock-mantle.us-east-1.api.aws/openai/v1/chat/completions"
     )
     assert request_data["authorization"] == "Bearer bedrock-secret"
-    assert request_data["payload"]["model"] == "google.gemma-3-12b-it"
+    assert request_data["payload"]["model"] == "google.gemma-4-31b"
     assert "Approved evidence." in request_data["payload"]["messages"][1]["content"]
     assert store.current_monthly_usage(BEDROCK_USAGE_PROVIDER_KEY)[1] > 128

@@ -26,7 +26,7 @@ for Windows PowerShell and assume the repository is at `F:\LearnflowAI`.
 Official references:
 
 - [Generate a Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html)
-- [Google Gemma 3 12B IT model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-google-gemma-3-12b-it.html)
+- [Google Gemma 4 31B model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-google-gemma-4-31b.html)
 - [Create an AWS budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budget-templates.html)
 
 ## 2. One-time local setup
@@ -61,8 +61,8 @@ LEARNFLOW_BEDROCK_CHAT_ENABLED=true
 AWS_REGION=us-east-1
 AWS_BEARER_TOKEN_BEDROCK=paste-the-new-key-here
 LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions
-LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-3-12b-it
-LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600
+LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-4-31b
+LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=1200
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 ```
 

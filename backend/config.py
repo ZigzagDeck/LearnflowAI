@@ -61,10 +61,10 @@ BEDROCK_API_MODE = os.getenv(
 ).strip()
 BEDROCK_API_KEY = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
 BEDROCK_MODEL_ID = os.getenv(
-    "LEARNFLOW_BEDROCK_MODEL_ID", "google.gemma-3-12b-it"
+    "LEARNFLOW_BEDROCK_MODEL_ID", "google.gemma-4-31b"
 ).strip()
 BEDROCK_MAX_OUTPUT_TOKENS = max(
-    64, min(2_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "600")))
+    64, min(2_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "1200")))
 )
 BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT = max(
     1,
