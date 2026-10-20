@@ -4,7 +4,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 
 - A React + TypeScript + Vite frontend
 - A Python + FastAPI backend with health, local material-upload, and extraction endpoints
-- Local OCR enrichment for PDF pages, PPTX embedded images, and standalone PNG/JPEG images
+- Google Document AI OCR for scanned/visual PDF pages, PPTX images, and standalone images
 - A local SQLite resource registry with content-hash deduplication and cached extraction results
 - A restart-safe SQLite processing queue with one CPU-heavy extraction job at a time
 - Automatic UI polling, per-page/slide progress, failure details, and explicit retry
@@ -20,7 +20,7 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `src/` - The frontend source code. `App.tsx` contains the page structure, while `App.css` and `index.css` contain its styles.
 - `backend/` - The Python API. `main.py` defines the FastAPI application, CORS settings, validation, upload, and extraction endpoints.
 - `backend/extraction.py` - PyMuPDF and python-pptx extraction with OCR enrichment and page/slide/image provenance.
-- `backend/ocr.py` - Lazy local RapidOCR adapter backed by ONNX Runtime.
+- `backend/ocr.py` - Inline Google Document AI OCR, local usage cap, and opt-in RapidOCR fallback.
 - `backend/resource_store.py` - SQLite metadata, cache, chunks, FTS, and compact dense vectors.
 - `backend/processing.py` - One-job-at-a-time extraction coordinator with durable progress and safe failures.
 - `backend/worker.py` - Local queue worker; it is the only process that loads the OCR model.
@@ -43,7 +43,7 @@ SQLite FTS5 and normalized `float32` embeddings are written in the same transact
 
 The embedding model is lazy: tests use four-dimensional deterministic fakes and never download or load it. On first real worker use, FastEmbed downloads `BAAI/bge-small-en-v1.5` into `backend/data/models` unless `LEARNFLOW_MODEL_CACHE_DIR` is changed. Runtime defaults are intentionally conservative: CPU only, one thread, batches of four, no ONNX CPU memory arena, and a refusal to initialize below 768 MB of currently free physical memory. These values can be adjusted with the `LEARNFLOW_EMBEDDING_*` and `LEARNFLOW_MIN_EMBEDDING_FREE_MB` settings in `.env.example`; increasing them can increase RAM usage.
 
-PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. OCR runs outside web requests in a dedicated local worker. SQLite claiming guarantees that only one heavy job runs at once, even if another worker is started. Jobs retain progress and failures across restarts; work with no update for 15 minutes is treated as interrupted and re-queued. Change that window with `LEARNFLOW_JOB_STALE_SECONDS`.
+PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. Google OCR runs outside web requests in the dedicated worker and sends bounded page/image bytes directly; it does not use Google Cloud Storage. Clean, substantial native PDF text is kept locally without a paid OCR call unless the page contains raster or vector visuals. Scanned/short pages, PPTX images, and standalone images always pass through OCR. SQLite claiming guarantees that only one job runs at once. Jobs retain progress and failures across restarts; work with no update for 15 minutes is re-queued.
 
 ## Prerequisites
 
@@ -61,6 +61,26 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
 ```
+
+## Configure Google Document AI OCR
+
+You need a Google Cloud project with billing enabled, the Document AI API enabled, and one **Enterprise Document OCR** processor. Create a service account with the least-privilege **Document AI API User** role (`roles/documentai.apiUser`) and download its JSON key outside this repository. Do not upload or commit that key.
+
+Before starting the worker, set these values in the same PowerShell window:
+
+```powershell
+$env:LEARNFLOW_OCR_PROVIDER="google_document_ai"
+$env:GOOGLE_CLOUD_PROJECT="your-project-id"
+$env:GOOGLE_DOCUMENT_AI_LOCATION="us"
+$env:GOOGLE_DOCUMENT_AI_PROCESSOR_ID="your-processor-id"
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\secure\path\document-ai-key.json"
+$env:LEARNFLOW_GOOGLE_OCR_MONTHLY_PAGE_LIMIT="1000"
+$env:LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED="false"
+```
+
+Use the exact location shown on the processor; the location is part of its identity and API endpoint. For hosted deployment, set the same non-secret values in the host settings and store the complete service-account JSON in the secret `LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON` instead of committing a file.
+
+The local SQLite counter reserves one page before every request and blocks requests beyond 1,000 pages in a calendar month by default. Inspect it at `GET /usage/ocr`. Keep a Google billing budget alert as a second guard because deleting the local database resets the local counter. RapidOCR remains available only when `LEARNFLOW_OCR_PROVIDER=rapidocr` or `LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED=true` is explicitly configured.
 
 If PowerShell blocks activation, you can run the backend with the virtual environment's Python directly instead:
 
@@ -96,7 +116,7 @@ cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
 .\.venv\Scripts\python.exe -m backend.worker
 ```
 
-Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR and embedding are local; it does not use AWS. The API process does not load either model.
+Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR uses Google Document AI, while chunking, embeddings, indexing, storage, and jobs remain local. The only AWS service planned is Bedrock.
 
 ## Test the health endpoint
 
@@ -157,7 +177,7 @@ The older stored-filename route remains as a compatibility endpoint. It now queu
 curl.exe -X POST http://localhost:8000/materials/REPLACE_WITH_STORED_FILENAME.pdf/extract
 ```
 
-Each PDF page is rendered and scanned with local OCR even when selectable text exists, so screenshots and diagram labels are not silently skipped. Embedded raster images in PPTX files are also scanned. OCR recovers visible text, but it does not reliably understand arrows, spatial relationships, or the meaning of a workflow; that requires a later visual-understanding stage.
+Scanned/short PDF pages and PDF pages containing raster or vector visuals are rendered and sent to Google OCR, so screenshot and diagram labels are not silently skipped. Text-heavy native PDF pages without visuals avoid a redundant paid call. Embedded raster images in PPTX files are scanned individually. OCR recovers visible text, but it does not reliably understand arrows, spatial relationships, or workflow meaning; that remains part of the later Bedrock visual-understanding stage.
 
 ## Checks
 

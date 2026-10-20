@@ -1,4 +1,4 @@
-"""Safe image decoding shared by upload validation and local OCR."""
+"""Safe image decoding shared by upload validation and OCR providers."""
 from io import BytesIO
 from pathlib import Path
 import warnings

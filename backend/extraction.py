@@ -13,6 +13,7 @@ MAX_EXTRACTION_UNITS = 500
 MAX_EXTRACTED_CHARACTERS = 2_000_000
 PDF_OCR_DPI = 180
 MAX_RENDERED_PAGE_PIXELS = 20_000_000
+MIN_CLEAN_NATIVE_TEXT_CHARACTERS = 80
 ProgressCallback = Callable[[int, int], None]
 
 
@@ -40,6 +41,13 @@ def _render_pdf_page(page: pymupdf.Page) -> bytes:
         matrix=pymupdf.Matrix(zoom, zoom), colorspace=pymupdf.csRGB, alpha=False
     )
     return pixmap.tobytes("png")
+
+
+def _pdf_page_requires_ocr(page: pymupdf.Page, native_text: str) -> bool:
+    """OCR scans, short pages, and pages containing raster/vector visuals."""
+    if len(" ".join(native_text.split())) < MIN_CLEAN_NATIVE_TEXT_CHARACTERS:
+        return True
+    return bool(page.get_images(full=True) or page.get_drawings())
 
 
 def _content_record(
@@ -83,9 +91,14 @@ def extract_pdf(
 
         for page_number, page in enumerate(document, start=1):
             native_text = page.get_text("text").strip()
-            ocr_text = ocr.read_text(_render_pdf_page(page))
+            should_scan = _pdf_page_requires_ocr(page, native_text)
+            ocr_text = ocr.read_text(_render_pdf_page(page)) if should_scan else ""
             record = _content_record(
-                "page", page_number, native_text, ocr_text, ocr_applied=True
+                "page",
+                page_number,
+                native_text,
+                ocr_text,
+                ocr_applied=should_scan,
             )
             text = str(record["text"])
             character_count += len(text)

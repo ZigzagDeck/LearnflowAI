@@ -100,11 +100,11 @@ def process_next_job(
                 embeddings=embeddings,
             )
         store.complete_job(job.job_id)
-    except OCRUnavailableError:
+    except OCRUnavailableError as error:
         store.fail_job(
             job.job_id,
             job.resource_id,
-            "Local OCR is unavailable. Install the backend OCR dependencies and retry.",
+            str(error),
         )
     except EmbeddingUnavailableError as error:
         store.fail_job(job.job_id, job.resource_id, str(error))

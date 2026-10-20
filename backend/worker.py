@@ -1,4 +1,4 @@
-"""Command-line worker for restart-safe local OCR and text extraction."""
+"""Command-line worker for restart-safe OCR, extraction, and local indexing."""
 
 import logging
 import os

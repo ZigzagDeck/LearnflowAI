@@ -20,6 +20,10 @@ class ResourceStoreError(RuntimeError):
     """A safe boundary for local metadata persistence failures."""
 
 
+class MonthlyUsageLimitError(ResourceStoreError):
+    """A locally enforced monthly external-service limit was reached."""
+
+
 @dataclass(frozen=True)
 class ResourceRecord:
     resource_id: str
@@ -153,6 +157,17 @@ class ResourceStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_processing_jobs_status_created "
                 "ON processing_jobs(status, created_at)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS monthly_service_usage (
+                    provider TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    units INTEGER NOT NULL CHECK (units >= 0),
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(provider, period)
+                )
+                """
             )
             connection.execute(
                 """
@@ -372,6 +387,63 @@ class ResourceStore:
             return [record for row in rows if (record := self._record(row))]
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not list resource metadata.") from exc
+
+    def reserve_monthly_usage(
+        self, provider: str, units: int, monthly_limit: int
+    ) -> int:
+        """Atomically reserve billable units before an external request."""
+        if not provider or units < 1 or monthly_limit < 1:
+            raise ValueError("Usage reservation values must be positive.")
+        period = datetime.now(UTC).strftime("%Y-%m")
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT units FROM monthly_service_usage
+                    WHERE provider = ? AND period = ?
+                    """,
+                    (provider, period),
+                ).fetchone()
+                current = int(row["units"]) if row else 0
+                updated = current + units
+                if updated > monthly_limit:
+                    raise MonthlyUsageLimitError(
+                        f"The configured {monthly_limit}-page monthly OCR limit "
+                        "has been reached."
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO monthly_service_usage (
+                        provider, period, units, updated_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(provider, period) DO UPDATE SET
+                        units = excluded.units,
+                        updated_at = excluded.updated_at
+                    """,
+                    (provider, period, updated, now),
+                )
+            return updated
+        except MonthlyUsageLimitError:
+            raise
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not reserve external service usage.") from exc
+
+    def current_monthly_usage(self, provider: str) -> tuple[str, int]:
+        period = datetime.now(UTC).strftime("%Y-%m")
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT units FROM monthly_service_usage
+                    WHERE provider = ? AND period = ?
+                    """,
+                    (provider, period),
+                ).fetchone()
+            return period, int(row["units"]) if row else 0
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read external service usage.") from exc
 
     def set_status(
         self, resource_id: str, status: str, error: str | None = None

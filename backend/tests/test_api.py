@@ -61,6 +61,15 @@ def test_health_check(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_ocr_usage_reports_local_monthly_counter(client):
+    response = client.get("/usage/ocr")
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "google_document_ai"
+    assert response.json()["used_pages"] == 0
+    assert response.json()["monthly_page_limit"] == 1000
+
+
 def test_upload_and_extract_pdf_with_page_reference(client):
     response = upload(client, "lecture.pdf", make_pdf())
     assert response.status_code == 200

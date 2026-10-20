@@ -25,7 +25,7 @@ def make_png() -> bytes:
     return stream.getvalue()
 
 
-def test_pdf_runs_ocr_even_when_native_text_exists(tmp_path):
+def test_pdf_runs_ocr_when_short_native_text_may_accompany_a_visual(tmp_path):
     path = tmp_path / "workflow.pdf"
     document = pymupdf.open()
     page = document.new_page()
@@ -45,6 +45,48 @@ def test_pdf_runs_ocr_even_when_native_text_exists(tmp_path):
     assert "Input -> Process -> Output" in result[0]["text"]
     assert result[0]["extraction_method"] == "native+ocr"
     assert result[0]["ocr_applied"] is True
+
+
+def test_pdf_skips_cloud_ocr_for_clean_native_text_without_visuals(tmp_path):
+    path = tmp_path / "native.pdf"
+    document = pymupdf.open()
+    page = document.new_page()
+    native = (
+        "This page contains a complete native explanation with enough selectable "
+        "text to avoid a redundant paid OCR request when no visual is present."
+    )
+    page.insert_textbox((72, 72, 500, 300), native)
+    document.save(path)
+    document.close()
+    ocr = FixedOCR("This should not be requested")
+
+    result = extract_pdf(path, ocr)
+
+    assert ocr.calls == 0
+    assert result[0]["ocr_applied"] is False
+    assert result[0]["extraction_method"] == "native"
+    assert "complete native explanation" in result[0]["text"]
+
+
+def test_pdf_scans_visual_page_even_when_native_text_is_substantial(tmp_path):
+    path = tmp_path / "visual.pdf"
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_textbox(
+        (72, 72, 500, 300),
+        "A detailed native explanation that is intentionally longer than the "
+        "clean-text threshold while the page also contains a workflow diagram.",
+    )
+    page.draw_line((100, 350), (400, 350))
+    document.save(path)
+    document.close()
+    ocr = FixedOCR("Start -> Process -> Finish")
+
+    result = extract_pdf(path, ocr)
+
+    assert ocr.calls == 1
+    assert result[0]["ocr_applied"] is True
+    assert "Start -> Process -> Finish" in result[0]["text"]
 
 
 def test_scanned_pdf_uses_ocr_as_text_fallback(tmp_path):

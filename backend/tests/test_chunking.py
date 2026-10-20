@@ -3,7 +3,7 @@
 import pytest
 
 from backend.chunking import build_chunks, split_text
-from backend.config import PROCESSING_PIPELINE_VERSION
+from backend.config import EXTRACTION_PIPELINE_VERSION, PROCESSING_PIPELINE_VERSION
 from backend.processing import process_next_job
 from backend.resource_store import ResourceStore
 from backend.tests.fake_embeddings import TinyEmbeddingProvider
@@ -85,7 +85,7 @@ def test_processed_content_and_chunks_persist_atomically(tmp_path):
     store.save_processed_content(
         resource.resource_id,
         content,
-        "native-rapidocr-v1",
+        EXTRACTION_PIPELINE_VERSION,
         chunks,
         CHUNK_VERSION,
     )
@@ -112,7 +112,7 @@ def test_cached_extraction_is_backfilled_without_repeating_ocr(tmp_path):
         size_bytes=128,
     )
     content = [extracted_page(1, "Already extracted text should only be chunked.")]
-    store.save_extraction(resource.resource_id, content, "native-rapidocr-v1")
+    store.save_extraction(resource.resource_id, content, EXTRACTION_PIPELINE_VERSION)
     store.enqueue_extraction(resource.resource_id, PROCESSING_PIPELINE_VERSION)
 
     def unexpected_ocr():

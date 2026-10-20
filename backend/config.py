@@ -4,6 +4,13 @@ import os
 from pathlib import Path
 
 
+def _environment_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on"}
+
+
 BACKEND_DIR = Path(__file__).parent
 UPLOAD_DIR = Path(
     os.getenv("LEARNFLOW_UPLOAD_DIR", str(BACKEND_DIR / "uploads"))
@@ -26,7 +33,24 @@ EMBEDDING_BATCH_SIZE = max(
 MIN_EMBEDDING_FREE_MB = max(
     256, int(os.getenv("LEARNFLOW_MIN_EMBEDDING_FREE_MB", "768"))
 )
-EXTRACTION_PIPELINE_VERSION = "native-rapidocr-v1"
+OCR_PROVIDER = os.getenv("LEARNFLOW_OCR_PROVIDER", "google_document_ai").strip()
+OCR_LOCAL_FALLBACK_ENABLED = _environment_flag(
+    "LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED"
+)
+GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+GOOGLE_DOCUMENT_AI_LOCATION = os.getenv(
+    "GOOGLE_DOCUMENT_AI_LOCATION", "us"
+).strip()
+GOOGLE_DOCUMENT_AI_PROCESSOR_ID = os.getenv(
+    "GOOGLE_DOCUMENT_AI_PROCESSOR_ID", ""
+).strip()
+GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT = max(
+    1, int(os.getenv("LEARNFLOW_GOOGLE_OCR_MONTHLY_PAGE_LIMIT", "1000"))
+)
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv(
+    "LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON", ""
+).strip()
+EXTRACTION_PIPELINE_VERSION = f"native-{OCR_PROVIDER}-selective-v2"
 CHUNKING_PIPELINE_VERSION = "semantic-boundary-v1"
 EMBEDDING_PIPELINE_VERSION = "fastembed-dense-v1"
 PROCESSING_PIPELINE_VERSION = (

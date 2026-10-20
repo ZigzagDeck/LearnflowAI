@@ -15,13 +15,16 @@ from .config import (
     CHUNKING_PIPELINE_VERSION,
     DATABASE_PATH,
     EXTRACTION_PIPELINE_VERSION,
+    GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT,
     MAX_UPLOAD_SIZE_BYTES,
     MAX_UPLOAD_SIZE_MB,
+    OCR_PROVIDER,
     PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
 )
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
+from .ocr import GOOGLE_OCR_PROVIDER_KEY
 from .resource_store import (
     ProcessingJob,
     ResourceRecord,
@@ -111,6 +114,28 @@ def resource_payload(store: ResourceStore, record: ResourceRecord) -> dict[str, 
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/usage/ocr")
+def ocr_usage() -> dict[str, object]:
+    try:
+        period, used_pages = get_resource_store().current_monthly_usage(
+            GOOGLE_OCR_PROVIDER_KEY
+        )
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="OCR usage tracking is unavailable."
+        ) from error
+    return {
+        "provider": OCR_PROVIDER,
+        "period": period,
+        "used_pages": used_pages,
+        "monthly_page_limit": (
+            GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT
+            if OCR_PROVIDER == "google_document_ai"
+            else None
+        ),
+    }
 
 
 def get_uploaded_file(document_id: str) -> tuple[Path, str]:

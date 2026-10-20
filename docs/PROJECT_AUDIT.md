@@ -4,7 +4,7 @@ Audit date: 2026-10-20
 
 Branch: `vm`
 
-AWS constraint: Amazon Bedrock only. Storage, OCR, transcription, retrieval, jobs, and metadata remain local.
+Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Document AI is approved for bounded OCR requests; storage, transcription, retrieval, jobs, and metadata remain local.
 
 ## Actual implementation status
 
@@ -13,17 +13,17 @@ AWS constraint: Amazon Bedrock only. Storage, OCR, transcription, retrieval, job
 | Frontend shell | React 19 + TypeScript + Vite single-page workspace | `src/App.tsx`, `src/App.css`, `src/index.css` | Lint and production build pass | Resource library, chat, citations, transcript, quiz, and persisted state |
 | Upload UI | File picker, drag/drop, progress, local validation; advertises PDF, PPTX, PNG, JPEG only | `src/App.tsx` | Build verified; automatic job polling and retry are integrated | Multiple uploads, cancellation, accessibility/UI tests |
 | Upload API | Streams bounded files to ignored local upload storage and verifies file contents | `backend/main.py`, `backend/file_validation.py` | API tests pass | Content hashes, deduplication, metadata registry, quotas, malware scanning |
-| PDF ingestion | Page-level native extraction plus bounded full-page local OCR | `backend/extraction.py`, `backend/ocr.py` | Durable background execution, progress, cache, and OCR tests pass | Tables/layout and visual-semantic descriptions |
+| PDF ingestion | Page-level native extraction plus selective Google OCR for scanned, short, or visual pages | `backend/extraction.py`, `backend/ocr.py` | Durable background execution, progress, cache, routing, and OCR tests pass | Tables/layout and visual-semantic descriptions |
 | PPTX ingestion | Editable shape text plus OCR of unique embedded PNG/JPEG images, with slide references | `backend/extraction.py` | Unit tests pass | Whole-slide rendering and visual-semantic descriptions; charts/grouped shapes need evaluation |
 | Image ingestion | Safe PNG/JPEG validation and OCR with image reference | `backend/image_utils.py`, `backend/file_validation.py`, `backend/extraction.py` | Upload/extract API tests pass | Visual-semantic descriptions and broader image formats only if justified |
-| OCR | RapidOCR PP-OCR models through ONNX Runtime; lazy local loading in one worker | `backend/ocr.py`, `backend/worker.py` | Real local inference recognized text and numbers; queue serializes heavy jobs | OCR quality evaluation set and language selection |
+| OCR | Google Enterprise Document OCR with inline bytes, selective visual/scanned-page routing, a local 1,000-page monthly cap, and opt-in RapidOCR fallback | `backend/ocr.py`, `backend/extraction.py`, `backend/worker.py` | Mock transport, cap, fallback, provenance, and routing tests pass without cloud calls | Live credential smoke test and OCR quality evaluation set |
 | Video | Contracts contain timestamp citation fields | `backend/contracts.py`, `backend/chat_service.py` | Contract tests pass | Upload, FFmpeg audio extraction, transcription, segment persistence, UI |
 | RAG | Strict retrieval-hit/citation contracts, deterministic citation chunks, allow-list-filtered SQLite FTS5/BM25, compact local embeddings, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Chunk, provenance, lexical/dense filtering, hybrid citation-adapter, persistence, and service tests pass | Ownership/authorization adapter and evaluation set |
 | Chat API | `/chat` router is now registered and fails closed when integrations are absent | `backend/chat_api.py`, `backend/main.py` | API tests pass | Real authorizer, retriever, Bedrock provider, frontend |
 | Model provider | Generic OpenAI-compatible adapter exists | `backend/llm_provider.py` | Mock tests pass | Replace/wrap with a Bedrock Runtime Converse provider; no live AWS test yet |
 | Quiz | Strict request/question/response models | `backend/contracts.py` | Validation tests pass | Retrieval-backed service, API, scoring boundary, frontend |
 | Persistence | Local files plus SQLite resource metadata, status, hashes, versioned extraction cache, durable jobs, and normalized chunks | `backend/uploads/`, `backend/resource_store.py` | Persistence, deduplication, cache, chunks, jobs, progress, retry, and recovery tests pass | Ownership and cleanup policy |
-| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 80 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
+| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 86 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
 
 ## Current data flow and diagnosis
 
@@ -38,7 +38,7 @@ OCR now prevents image text from being silently skipped, but OCR alone cannot in
 | Concern | Choice | Requirement level | Reason |
 | --- | --- | --- | --- |
 | PDF/PPTX extraction | PyMuPDF + python-pptx | Mandatory/current | Already integrated and suitable for native text and source references |
-| OCR | RapidOCR + ONNX Runtime + Pillow | Mandatory/current | Local CPU inference, bundled compact models, no AWS OCR bill or separate Tesseract installation |
+| OCR | Google Enterprise Document OCR + optional RapidOCR fallback | Mandatory/current | Moves OCR inference off the laptop; inline requests avoid Cloud Storage, and a local monthly page cap limits usage |
 | Visual understanding | Bedrock Converse with an approved multimodal model | Mandatory for diagrams | The only cloud service; pass bounded page/image bytes directly, not through S3 |
 | Video transcription | FFmpeg + faster-whisper | Mandatory later | Local timestamped transcription; avoids Amazon Transcribe charges |
 | Metadata/cache | SQLite + content-addressed local files | Mandatory next | Durable, cheap, simple, supports hashes/status/jobs without a managed database |
@@ -49,7 +49,7 @@ OCR now prevents image text from being silently skipped, but OCR alone cannot in
 | Lexical retrieval | SQLite FTS5/BM25 | Mandatory for hybrid RAG | No extra service; strong exact-term search beside semantic retrieval |
 | Reranking | None initially | Optional | Add a local cross-encoder only if the evaluation set shows a useful gain |
 | LLM/quiz generation | Bedrock Runtime Converse via `boto3`, validated with Pydantic | Mandatory later | One AWS integration, one request interface, structured grounded outputs |
-| Storage/AWS services | Local disk + SQLite; Bedrock only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, or CloudWatch |
+| Storage/cloud services | Local disk + SQLite; Bedrock and bounded Google Document AI calls only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, CloudWatch, or Google Cloud Storage |
 
 For small corpora, Sentence Transformers documents direct semantic search as practical, so the current SQLite scan avoids a second index dependency. Bedrock Converse accepts raw image bytes for supported multimodal models, so S3 is not required for diagram analysis.
 
@@ -72,6 +72,9 @@ The first slice adds two runtime dependencies (`rapidocr`, `onnxruntime`), keeps
 ## Technical references
 
 - [RapidOCR installation and packaged-model guidance](https://rapidai.github.io/RapidOCRDocs/main/install_usage/rapidocr/install/)
+- [Google Document AI setup](https://docs.cloud.google.com/document-ai/docs/setup)
+- [Google Document AI pricing](https://cloud.google.com/products/document-ai/pricing)
+- [Document AI IAM roles](https://docs.cloud.google.com/document-ai/docs/access-control/iam-roles)
 - [PyMuPDF OCR guidance](https://pymupdf.readthedocs.io/en/latest/recipes-ocr.html)
 - [faster-whisper repository](https://github.com/SYSTRAN/faster-whisper)
 - [Sentence Transformers semantic-search documentation](https://www.sbert.net/examples/sentence_transformer/applications/semantic-search/README.html)
