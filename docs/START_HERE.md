@@ -65,7 +65,7 @@ LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 ```
 
-Keep the existing Google Document AI and Voyage values in the same `.env`.
+Keep the existing Google Document AI and Jina values in the same `.env`.
 
 ## 3. Start LearnFlowAI every time
 
@@ -113,10 +113,10 @@ Expected basics:
 
 - Health returns `status: ok`.
 - OCR provider is `google_document_ai`.
-- Embedding provider is `voyage`.
+- Embedding provider is `jina`.
 - Bedrock reports `enabled: true` and the configured Nova Lite model.
 
-These checks do not call Google, Voyage, YouTube, or AWS.
+These checks do not call Google, Jina, YouTube, or AWS.
 
 ## 5. See document and image processing work
 
@@ -126,7 +126,7 @@ These checks do not call Google, Voyage, YouTube, or AWS.
 4. Watch the worker terminal and the UI processing status.
 5. The workspace displays extracted/OCR text by page, slide, or image.
 
-Google OCR and Voyage embedding requests occur during worker processing when
+Google OCR and Jina embedding requests occur during worker processing when
 needed. Do not close the worker while a material is queued or processing.
 
 ## 6. See YouTube processing work
@@ -161,7 +161,7 @@ Invoke-RestMethod `
   -Body $body
 ```
 
-This performs Voyage query embedding and one bounded Bedrock request. The result
+This performs Jina query embedding and one bounded Bedrock request. The result
 should contain `answer`, `grounded`, and server-validated `citations`.
 
 For a YouTube resource, include the watched position so future captions are not
@@ -196,11 +196,11 @@ and usage counters in local storage.
   `us-east-1`, Nova Lite is available, and the local monthly limit is not reached.
 - **YouTube captions fail:** first confirm the video is public and shows a
   transcript on YouTube. Some hosting providers' IP addresses may be blocked.
-- **Voyage returns HTTP 429:** keep Voyage as the primary provider and set
-  `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true`. Restart the API and worker,
-  then retry the material from History. The local fallback loads only after
-  Voyage fails and remains protected by the configured free-memory gate.
-- **Google or Voyage authentication fails:** verify the existing `.env` values,
+- **Jina returns HTTP 429:** the provider retries with bounded exponential backoff.
+  If every retry fails, keep `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true`,
+  restart the API and worker, then retry the material from History. The local
+  fallback remains protected by the configured free-memory gate.
+- **Google or Jina authentication fails:** verify the existing `.env` values,
   rotate any exposed key, then restart both API and worker.
 
 Never commit `.env`, Google service-account JSON, Bedrock keys, or API keys.

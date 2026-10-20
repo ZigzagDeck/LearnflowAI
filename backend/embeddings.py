@@ -1,8 +1,9 @@
-"""Guarded Voyage embeddings with an optional memory-conscious local fallback."""
+"""Guarded Jina embeddings with an optional memory-conscious local fallback."""
 
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
 import math
+import time
 from typing import Protocol
 
 import httpx
@@ -15,11 +16,11 @@ from .config import (
     EMBEDDING_THREADS,
     MIN_EMBEDDING_FREE_MB,
     MODEL_CACHE_DIR,
-    VOYAGE_API_KEY,
-    VOYAGE_EMBEDDING_BATCH_SIZE,
-    VOYAGE_EMBEDDING_DIMENSIONS,
-    VOYAGE_EMBEDDING_MODEL,
-    VOYAGE_MONTHLY_TOKEN_LIMIT,
+    JINA_API_KEY,
+    JINA_EMBEDDING_BATCH_SIZE,
+    JINA_EMBEDDING_DIMENSIONS,
+    JINA_EMBEDDING_MODEL,
+    JINA_MONTHLY_TOKEN_LIMIT,
     DATABASE_PATH,
 )
 from .resource_store import (
@@ -30,8 +31,8 @@ from .resource_store import (
 from .system_resources import available_memory_bytes
 
 
-VOYAGE_EMBEDDING_ENDPOINT = "https://api.voyageai.com/v1/embeddings"
-VOYAGE_USAGE_PROVIDER_KEY = "voyage_embedding_token_units"
+JINA_EMBEDDING_ENDPOINT = "https://api.jina.ai/v1/embeddings"
+JINA_USAGE_PROVIDER_KEY = "jina_embedding_token_units"
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -57,29 +58,33 @@ def normalize_vector(values: Iterable[float]) -> list[float]:
     return normalized
 
 
-class VoyageEmbeddingProvider:
-    """Small REST adapter with conservative batching and a local usage ceiling."""
+class JinaEmbeddingProvider:
+    """Jina REST adapter with bounded batching, retry, and a local usage ceiling."""
 
     def __init__(
         self,
         store: ResourceStore,
         *,
-        api_key: str = VOYAGE_API_KEY,
-        api_model: str = VOYAGE_EMBEDDING_MODEL,
-        dimensions: int = VOYAGE_EMBEDDING_DIMENSIONS,
-        batch_size: int = VOYAGE_EMBEDDING_BATCH_SIZE,
-        monthly_token_limit: int = VOYAGE_MONTHLY_TOKEN_LIMIT,
+        api_key: str = JINA_API_KEY,
+        api_model: str = JINA_EMBEDDING_MODEL,
+        dimensions: int = JINA_EMBEDDING_DIMENSIONS,
+        batch_size: int = JINA_EMBEDDING_BATCH_SIZE,
+        monthly_token_limit: int = JINA_MONTHLY_TOKEN_LIMIT,
         client: httpx.Client | None = None,
+        retry_delays: Sequence[float] = (1.0, 2.0, 4.0, 8.0),
+        sleep=time.sleep,
     ) -> None:
-        if dimensions not in {256, 512, 1024, 2048}:
-            raise ValueError("Voyage embedding dimensions must be 256, 512, 1024, or 2048.")
+        if dimensions < 1 or dimensions > 1024:
+            raise ValueError("Jina embedding dimensions must be between 1 and 1024.")
         self.store = store
         self.api_key = api_key
         self.api_model = api_model
         self.dimensions = dimensions
         self.batch_size = max(1, min(128, batch_size))
         self.monthly_token_limit = monthly_token_limit
-        self.model_name = f"voyage:{api_model}:{dimensions}"
+        self.retry_delays = tuple(max(0.0, delay) for delay in retry_delays)
+        self.sleep = sleep
+        self.model_name = f"jina:{api_model}:{dimensions}"
         self._client = client or httpx.Client(timeout=60.0)
 
     @staticmethod
@@ -87,52 +92,83 @@ class VoyageEmbeddingProvider:
         # UTF-8 byte count intentionally overestimates normal text token usage.
         return max(1, sum(len(text.encode("utf-8")) for text in texts))
 
-    def _embed(self, texts: Sequence[str], input_type: str) -> list[list[float]]:
+    @staticmethod
+    def _safe_error_detail(response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        detail = payload.get("detail") or payload.get("message")
+        code = payload.get("code")
+        pieces = [str(item).strip() for item in (code, detail) if item]
+        return ": ".join(pieces)[:300]
+
+    def _post_with_retry(self, payload: dict[str, object]) -> httpx.Response:
+        for attempt in range(len(self.retry_delays) + 1):
+            response = self._client.post(
+                JINA_EMBEDDING_ENDPOINT,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+            )
+            if response.status_code != 429 or attempt == len(self.retry_delays):
+                return response
+            retry_after = response.headers.get("Retry-After", "")
+            try:
+                delay = min(30.0, max(self.retry_delays[attempt], float(retry_after)))
+            except ValueError:
+                delay = self.retry_delays[attempt]
+            self.sleep(delay)
+        raise AssertionError("unreachable")
+
+    def _embed(self, texts: Sequence[str], task: str) -> list[list[float]]:
         if not texts:
             return []
         if not self.api_key:
             raise EmbeddingUnavailableError(
-                "Voyage embeddings require VOYAGE_API_KEY to be configured."
+                "Jina embeddings require JINA_API_KEY to be configured."
             )
         units = self._conservative_token_units(texts)
         try:
             self.store.reserve_monthly_usage(
-                VOYAGE_USAGE_PROVIDER_KEY, units, self.monthly_token_limit
+                JINA_USAGE_PROVIDER_KEY, units, self.monthly_token_limit
             )
-            response = self._client.post(
-                VOYAGE_EMBEDDING_ENDPOINT,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
+            response = self._post_with_retry(
+                {
                     "input": list(texts),
                     "model": self.api_model,
-                    "input_type": input_type,
-                    "truncation": False,
-                    "output_dimension": self.dimensions,
-                    "output_dtype": "float",
+                    "task": task,
+                    "dimensions": self.dimensions,
+                    "normalized": True,
                 },
             )
             response.raise_for_status()
             payload = response.json()
         except MonthlyUsageLimitError as exc:
             raise EmbeddingUnavailableError(
-                "The configured monthly Voyage embedding limit has been reached."
+                "The configured monthly Jina embedding limit has been reached."
             ) from exc
         except ResourceStoreError as exc:
             raise EmbeddingUnavailableError(
-                "Voyage usage tracking is unavailable; no request was sent."
+                "Jina usage tracking is unavailable; no request was sent."
             ) from exc
         except httpx.HTTPStatusError as exc:
+            detail = self._safe_error_detail(exc.response)
+            suffix = f" ({detail})" if detail else ""
+            request_id = exc.response.headers.get("x-request-id")
+            request_suffix = f" Request ID: {request_id}." if request_id else ""
             raise EmbeddingUnavailableError(
-                "Voyage rejected the embedding request "
-                f"with status {exc.response.status_code}."
+                "Jina rejected the embedding request "
+                f"with status {exc.response.status_code}{suffix}.{request_suffix}"
             ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise EmbeddingUnavailableError(
-                "Voyage could not process the embedding request."
+                "Jina could not process the embedding request."
             ) from exc
 
         if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
-            raise EmbeddingUnavailableError("Voyage returned an invalid response.")
+            raise EmbeddingUnavailableError("Jina returned an invalid response.")
         ordered: list[list[float] | None] = [None] * len(texts)
         try:
             for position, item in enumerate(payload["data"]):
@@ -146,23 +182,23 @@ class VoyageEmbeddingProvider:
                     raise ValueError("Unexpected embedding dimensions.")
                 ordered[index] = vector
         except (KeyError, TypeError, ValueError) as exc:
-            raise EmbeddingUnavailableError("Voyage returned invalid embeddings.") from exc
+            raise EmbeddingUnavailableError("Jina returned invalid embeddings.") from exc
         if any(vector is None for vector in ordered):
-            raise EmbeddingUnavailableError("Voyage returned incomplete embeddings.")
+            raise EmbeddingUnavailableError("Jina returned incomplete embeddings.")
         return [vector for vector in ordered if vector is not None]
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for start in range(0, len(texts), self.batch_size):
             vectors.extend(
-                self._embed(texts[start : start + self.batch_size], "document")
+                self._embed(texts[start : start + self.batch_size], "retrieval.passage")
             )
         return vectors
 
     def embed_query(self, text: str) -> list[float]:
-        vectors = self._embed([text], "query")
+        vectors = self._embed([text], "retrieval.query")
         if not vectors:
-            raise EmbeddingUnavailableError("Voyage returned no query embedding.")
+            raise EmbeddingUnavailableError("Jina returned no query embedding.")
         return vectors[0]
 
 
@@ -248,7 +284,7 @@ class FastEmbedProvider:
 
 
 class FallbackEmbeddingProvider:
-    """Switch permanently to local embeddings after the first Voyage failure."""
+    """Switch permanently to local embeddings after the cloud provider fails."""
 
     def __init__(self, primary: EmbeddingProvider, fallback: EmbeddingProvider):
         self.primary = primary
@@ -282,11 +318,11 @@ class FallbackEmbeddingProvider:
 def get_embedding_provider() -> EmbeddingProvider:
     if EMBEDDING_PROVIDER == "fastembed":
         return FastEmbedProvider()
-    if EMBEDDING_PROVIDER != "voyage":
+    if EMBEDDING_PROVIDER != "jina":
         raise EmbeddingUnavailableError(
-            "LEARNFLOW_EMBEDDING_PROVIDER must be voyage or fastembed."
+            "LEARNFLOW_EMBEDDING_PROVIDER must be jina or fastembed."
         )
-    primary = VoyageEmbeddingProvider(ResourceStore(DATABASE_PATH))
+    primary = JinaEmbeddingProvider(ResourceStore(DATABASE_PATH))
     if EMBEDDING_LOCAL_FALLBACK_ENABLED:
         return FallbackEmbeddingProvider(primary, FastEmbedProvider())
     return primary

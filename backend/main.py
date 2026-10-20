@@ -28,11 +28,11 @@ from .config import (
     OCR_PROVIDER,
     PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
-    VOYAGE_EMBEDDING_DIMENSIONS,
-    VOYAGE_EMBEDDING_MODEL,
-    VOYAGE_MONTHLY_TOKEN_LIMIT,
+    JINA_EMBEDDING_DIMENSIONS,
+    JINA_EMBEDDING_MODEL,
+    JINA_MONTHLY_TOKEN_LIMIT,
 )
-from .embeddings import VOYAGE_USAGE_PROVIDER_KEY
+from .embeddings import JINA_USAGE_PROVIDER_KEY
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
 from .ocr import GOOGLE_OCR_PROVIDER_KEY
@@ -168,7 +168,7 @@ def ocr_usage() -> dict[str, object]:
 def embedding_usage() -> dict[str, object]:
     try:
         period, used_units = get_resource_store().current_monthly_usage(
-            VOYAGE_USAGE_PROVIDER_KEY
+            JINA_USAGE_PROVIDER_KEY
         )
     except ResourceStoreError as error:
         raise HTTPException(
@@ -176,14 +176,14 @@ def embedding_usage() -> dict[str, object]:
         ) from error
     return {
         "provider": EMBEDDING_PROVIDER,
-        "model": VOYAGE_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "voyage" else None,
+        "model": JINA_EMBEDDING_MODEL if EMBEDDING_PROVIDER == "jina" else None,
         "dimensions": (
-            VOYAGE_EMBEDDING_DIMENSIONS if EMBEDDING_PROVIDER == "voyage" else None
+            JINA_EMBEDDING_DIMENSIONS if EMBEDDING_PROVIDER == "jina" else None
         ),
         "period": period,
         "used_conservative_token_units": used_units,
         "monthly_token_unit_limit": (
-            VOYAGE_MONTHLY_TOKEN_LIMIT if EMBEDDING_PROVIDER == "voyage" else None
+            JINA_MONTHLY_TOKEN_LIMIT if EMBEDDING_PROVIDER == "jina" else None
         ),
     }
 

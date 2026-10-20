@@ -98,12 +98,12 @@ def test_embedding_usage_reports_local_monthly_counter(client):
 
     assert response.status_code == 200
     assert response.json()["provider"] == backend_main.EMBEDDING_PROVIDER
-    assert response.json()["model"] == backend_main.VOYAGE_EMBEDDING_MODEL
-    assert response.json()["dimensions"] == backend_main.VOYAGE_EMBEDDING_DIMENSIONS
+    assert response.json()["model"] == backend_main.JINA_EMBEDDING_MODEL
+    assert response.json()["dimensions"] == backend_main.JINA_EMBEDDING_DIMENSIONS
     assert response.json()["used_conservative_token_units"] == 0
     assert (
         response.json()["monthly_token_unit_limit"]
-        == backend_main.VOYAGE_MONTHLY_TOKEN_LIMIT
+        == backend_main.JINA_MONTHLY_TOKEN_LIMIT
     )
 
 

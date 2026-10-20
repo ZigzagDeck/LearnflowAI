@@ -4,7 +4,7 @@ Audit date: 2026-10-20
 
 Branch: `vm`
 
-Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Document AI is approved for bounded OCR requests and Voyage AI for bounded embeddings; storage, transcription, retrieval, jobs, and metadata remain local.
+Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Document AI is approved for bounded OCR requests and Jina AI for bounded embeddings; storage, transcription, retrieval, jobs, and metadata remain local.
 
 ## Actual implementation status
 
@@ -18,7 +18,7 @@ Cloud constraint: Amazon Bedrock is the only approved AWS service. Google Docume
 | Image ingestion | Safe PNG/JPEG validation and OCR with image reference | `backend/image_utils.py`, `backend/file_validation.py`, `backend/extraction.py` | Upload/extract API tests pass | Visual-semantic descriptions and broader image formats only if justified |
 | OCR | Google Enterprise Document OCR with inline bytes, selective visual/scanned-page routing, a local 1,000-page monthly cap, and opt-in RapidOCR fallback | `backend/ocr.py`, `backend/extraction.py`, `backend/worker.py` | Mock transport, cap, fallback, provenance, and routing tests pass without cloud calls | Live credential smoke test and OCR quality evaluation set |
 | Video | Direct YouTube links import available captions with real timestamps, persist transcript chunks, and support watched-time retrieval | `backend/youtube_ingestion.py`, `backend/processing.py`, `backend/retrieval.py`, `src/App.tsx` | URL validation, caption normalization, persistence, retrieval cutoff, API, build, and lint tests pass | Captionless videos and uploaded-video transcription |
-| RAG | Strict citation chunks, allow-list-filtered SQLite FTS5/BM25, guarded Voyage embeddings with local fallback, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Voyage transport/limit, local fallback, lexical/dense filtering, hybrid citation, persistence, and service tests pass without cloud calls | Live credential smoke test, ownership adapter, and evaluation set |
+| RAG | Strict citation chunks, allow-list-filtered SQLite FTS5/BM25, guarded Jina embeddings with local fallback, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Jina transport/retry/limit, local fallback, lexical/dense filtering, hybrid citation, persistence, and service tests pass without cloud calls | Live credential smoke test, ownership adapter, and evaluation set |
 | Chat API | `/chat` is opt-in and wires ready local resources to filtered hybrid retrieval and Bedrock | `backend/chat_api.py`, `backend/chat_integration.py`, `backend/main.py` | Authorization, retrieval boundaries, failure, and API tests pass | Public multi-user identity/ownership, frontend, live credential test |
 | Model provider | Bedrock Runtime Converse adapter with bounded evidence/output and a pre-request monthly unit guard | `backend/llm_provider.py` | Mock Converse, limit, malformed response, and secret-safe failure tests pass | Live AWS smoke test and cost measurement |
 | Quiz | Strict request/question/response models | `backend/contracts.py` | Validation tests pass | Retrieval-backed service, API, scoring boundary, frontend |
@@ -44,12 +44,12 @@ OCR now prevents image text from being silently skipped, but OCR alone cannot in
 | Metadata/cache | SQLite + content-addressed local files | Mandatory next | Durable, cheap, simple, supports hashes/status/jobs without a managed database |
 | Background processing | Dedicated local Python worker over a SQLite job table | Mandatory before large resources | Restart-safe processing without Redis or a cloud queue; keep web requests short |
 | Chunking | Small in-repository semantic-boundary chunker | Mandatory | Paragraph/heading/slide/transcript-aware behavior without a framework dependency |
-| Embeddings | Voyage `voyage-4-lite` at 256 dimensions; optional FastEmbed fallback | Mandatory/current | Cloud inference is the low-RAM default; local fallback remains lazy, CPU-only, one-threaded, and memory-guarded |
+| Embeddings | Jina `jina-embeddings-v3` at 256 dimensions; optional FastEmbed fallback | Mandatory/current | Cloud inference is the low-RAM default; bounded 429 retries precede the lazy, CPU-only, one-threaded local fallback |
 | Dense retrieval | Normalized float32 vectors in SQLite with bounded exact cosine scan | Mandatory/current | Avoids another compiled index and resident copy while the hackathon corpus is small |
 | Lexical retrieval | SQLite FTS5/BM25 | Mandatory for hybrid RAG | No extra service; strong exact-term search beside semantic retrieval |
 | Reranking | None initially | Optional | Add a local cross-encoder only if the evaluation set shows a useful gain |
 | LLM/quiz generation | Bedrock Runtime Converse via `boto3`, validated with Pydantic | Mandatory later | One AWS integration, one request interface, structured grounded outputs |
-| Storage/cloud services | Local disk + SQLite; Bedrock, bounded Google OCR, and bounded Voyage embeddings only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, CloudWatch, or Google Cloud Storage |
+| Storage/cloud services | Local disk + SQLite; Bedrock, bounded Google OCR, and bounded Jina embeddings only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, CloudWatch, or Google Cloud Storage |
 
 For small corpora, Sentence Transformers documents direct semantic search as practical, so the current SQLite scan avoids a second index dependency. Bedrock Converse accepts raw image bytes for supported multimodal models, so S3 is not required for diagram analysis.
 
@@ -79,6 +79,6 @@ The first slice adds two runtime dependencies (`rapidocr`, `onnxruntime`), keeps
 - [faster-whisper repository](https://github.com/SYSTRAN/faster-whisper)
 - [Sentence Transformers semantic-search documentation](https://www.sbert.net/examples/sentence_transformer/applications/semantic-search/README.html)
 - [FastEmbed documentation](https://qdrant.github.io/fastembed/Getting%20Started/)
-- [Voyage text embeddings](https://docs.voyageai.com/docs/embeddings)
-- [Voyage pricing](https://docs.voyageai.com/docs/pricing)
+- [Jina text embeddings](https://jina.ai/embeddings/)
+- [Jina API reference](https://api.jina.ai/docs)
 - [Amazon Bedrock Runtime Converse API](https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime/client/converse.html)
