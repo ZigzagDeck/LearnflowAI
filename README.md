@@ -46,7 +46,7 @@ SQLite FTS5 and normalized `float32` embeddings are written in the same transact
 
 Voyage AI is the default embedding provider, using `voyage-4-lite` with 256-dimensional retrieval vectors to keep stored vectors compact. Document and query inputs use Voyage's respective retrieval input types. Requests are split into batches of at most 32 texts. A conservative local counter reserves UTF-8 byte units before each request and defaults to 10 million units per calendar month, well below Voyage's currently published free-token allowance. Inspect it at `GET /usage/embeddings`. Deleting the SQLite database resets this local guard, so configure project limits in the Voyage dashboard as a second control.
 
-FastEmbed remains an offline option. Set `LEARNFLOW_EMBEDDING_PROVIDER=fastembed` to use it directly, or explicitly enable `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true`. Local inference is disabled by default. When enabled, the local model stays CPU-only, one-threaded, small-batch, and protected by the 768 MB free-memory gate.
+FastEmbed is the automatic last resort when Voyage rejects or cannot serve a request. Set `LEARNFLOW_EMBEDDING_PROVIDER=fastembed` to use it directly, or keep `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true` while Voyage remains the primary provider. The local model is loaded lazily only after a Voyage failure, stays CPU-only and one-threaded, uses batches of at most four texts, and is protected by the 768 MB free-memory gate.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. Google OCR runs outside web requests in the dedicated worker and sends bounded page/image bytes directly; it does not use Google Cloud Storage. Clean, substantial native PDF text is kept locally without a paid OCR call unless the page contains raster or vector visuals. Scanned/short pages, PPTX images, and standalone images always pass through OCR. SQLite claiming guarantees that only one job runs at once. Jobs retain progress and failures across restarts; work with no update for 15 minutes is re-queued.
 
@@ -99,7 +99,7 @@ $env:VOYAGE_API_KEY="your-rotated-secret-key"
 $env:LEARNFLOW_VOYAGE_EMBEDDING_MODEL="voyage-4-lite"
 $env:LEARNFLOW_VOYAGE_EMBEDDING_DIMENSIONS="256"
 $env:LEARNFLOW_VOYAGE_MONTHLY_TOKEN_LIMIT="10000000"
-$env:LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED="false"
+$env:LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED="true"
 ```
 
 For hosted deployment, configure the same values in the host's secret/environment settings. The API key must never be exposed through a `VITE_` variable because those values are compiled into browser code.

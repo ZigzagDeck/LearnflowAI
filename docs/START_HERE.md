@@ -196,6 +196,10 @@ and usage counters in local storage.
   `us-east-1`, Nova Lite is available, and the local monthly limit is not reached.
 - **YouTube captions fail:** first confirm the video is public and shows a
   transcript on YouTube. Some hosting providers' IP addresses may be blocked.
+- **Voyage returns HTTP 429:** keep Voyage as the primary provider and set
+  `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true`. Restart the API and worker,
+  then retry the material from History. The local fallback loads only after
+  Voyage fails and remains protected by the configured free-memory gate.
 - **Google or Voyage authentication fails:** verify the existing `.env` values,
   rotate any exposed key, then restart both API and worker.
 
