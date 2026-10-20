@@ -10,8 +10,8 @@ for Windows PowerShell and assume the repository is at `F:\LearnflowAI`.
 2. Set the console Region in the top-right corner to **US East (N. Virginia) —
    `us-east-1`**.
 3. Search for **Amazon Bedrock** and open the service console.
-4. Open **Model catalog**, search for **Nova Lite**, and confirm that
-   `Amazon Nova Lite` is available. Most models are enabled automatically. If
+4. Open **Model catalog**, search for **Gemma 3 12B IT**, and confirm that
+   `Google Gemma 3 12B IT` is available. Most models are enabled automatically. If
    the console shows an access action, complete it before continuing.
 5. In Bedrock's left navigation, open **API keys**.
 6. Open **Long-term API keys**, select **Generate long-term API key**, choose a
@@ -26,7 +26,7 @@ for Windows PowerShell and assume the repository is at `F:\LearnflowAI`.
 Official references:
 
 - [Generate a Bedrock API key](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html)
-- [Amazon Nova Lite model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-amazon-nova-lite.html)
+- [Google Gemma 3 12B IT model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-google-gemma-3-12b-it.html)
 - [Create an AWS budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budget-templates.html)
 
 ## 2. One-time local setup
@@ -60,7 +60,8 @@ Add these Bedrock values to that existing file:
 LEARNFLOW_BEDROCK_CHAT_ENABLED=true
 AWS_REGION=us-east-1
 AWS_BEARER_TOKEN_BEDROCK=paste-the-new-key-here
-LEARNFLOW_BEDROCK_MODEL_ID=amazon.nova-lite-v1:0
+LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions
+LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-3-12b-it
 LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 ```
@@ -114,7 +115,7 @@ Expected basics:
 - Health returns `status: ok`.
 - OCR provider is `google_document_ai`.
 - Embedding provider is `jina`.
-- Bedrock reports `enabled: true` and the configured Nova Lite model.
+- Bedrock reports `enabled: true`, API mode `mantle_chat_completions`, and the configured Gemma model.
 
 These checks do not call Google, Jina, YouTube, or AWS.
 
@@ -142,9 +143,9 @@ captionless, or deployment-blocked videos return a readable error.
 
 ## 7. Verify Bedrock with one bounded request
 
-The current frontend does not yet contain the chat panel. After at least one
-material is ready, copy its `resource_id` from the upload response or
-`http://localhost:8000/materials`, then run:
+The frontend chat panel lists every ready document, image, and YouTube transcript.
+Select one or more sources there and ask a question. For a direct API check, copy
+a ready `resource_id` from `http://localhost:8000/materials`, then run:
 
 ```powershell
 $resourceId = "replace-with-ready-resource-id"
@@ -193,7 +194,7 @@ and usage counters in local storage.
 - **Bedrock reports disabled:** add the Bedrock values to `.env`, save it, and
   restart the API.
 - **Bedrock returns HTTP 503:** verify the API key has not expired, the Region is
-  `us-east-1`, Nova Lite is available, and the local monthly limit is not reached.
+  `us-east-1`, Gemma 3 12B IT is available, and the local monthly limit is not reached.
 - **YouTube captions fail:** first confirm the video is public and shows a
   transcript on YouTube. Some hosting providers' IP addresses may be blocked.
 - **Jina returns HTTP 429:** the provider retries with bounded exponential backoff.

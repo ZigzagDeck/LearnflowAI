@@ -16,6 +16,7 @@ from .chat_integration import build_local_bedrock_chat_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
+    BEDROCK_API_MODE,
     BEDROCK_CHAT_ENABLED,
     BEDROCK_MODEL_ID,
     BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT,
@@ -200,6 +201,7 @@ def bedrock_usage() -> dict[str, object]:
         ) from error
     return {
         "enabled": BEDROCK_CHAT_ENABLED,
+        "api_mode": BEDROCK_API_MODE,
         "model": BEDROCK_MODEL_ID,
         "period": period,
         "used_conservative_token_units": used_units,

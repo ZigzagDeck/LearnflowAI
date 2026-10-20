@@ -37,7 +37,7 @@ type ChatMessage = {
   message_id: string
   role: 'user' | 'assistant'
   content: string
-  citations: Array<{ source_id: string; source_type: string; page?: number; slide?: number; image?: number }>
+  citations: Array<{ source_id: string; source_type: string; page?: number; slide?: number; image?: number; start_seconds?: number; end_seconds?: number }>
   created_at: string
 }
 
@@ -94,14 +94,17 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatQuestion, setChatQuestion] = useState('')
   const [chatSourceIds, setChatSourceIds] = useState<string[]>([])
+  const [chatVideoSourceId, setChatVideoSourceId] = useState('')
+  const [chatVideoDuration, setChatVideoDuration] = useState(0)
+  const [chatPlaybackSeconds, setChatPlaybackSeconds] = useState(0)
   const [chatBusy, setChatBusy] = useState(false)
   const [chatError, setChatError] = useState('')
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
 
-  const loadHistories = useCallback(async () => {
-    setHistoryBusy(true)
+  const loadHistories = useCallback(async (silent = false) => {
+    if (!silent) setHistoryBusy(true)
     try {
       const [materialsResponse, chatsResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/materials`),
@@ -121,11 +124,57 @@ function App() {
     } catch (error) {
       setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded.')
     } finally {
-      setHistoryBusy(false)
+      if (!silent) setHistoryBusy(false)
     }
   }, [])
 
-  useEffect(() => { void loadHistories() }, [loadHistories])
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadHistories(), 0)
+    return () => window.clearTimeout(timer)
+  }, [loadHistories])
+
+  useEffect(() => {
+    if (!materials.some((item) => item.status === 'uploaded' || item.status === 'processing')) return
+    const timer = window.setInterval(() => void loadHistories(true), 1500)
+    return () => window.clearInterval(timer)
+  }, [materials, loadHistories])
+
+  useEffect(() => {
+    if (!chatVideoSourceId) return
+    let active = true
+    const loadVideoDuration = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/materials/${chatVideoSourceId}/content`)
+        const payload = await response.json()
+        if (!response.ok) throw new Error(payload.detail || 'The video transcript could not be loaded.')
+        const duration = Math.max(0, ...(payload.content || []).map((unit: ExtractedUnit) => unit.end_seconds || 0))
+        if (active) {
+          setChatVideoDuration(duration)
+          setChatPlaybackSeconds(duration)
+        }
+      } catch (error) {
+        if (active) setChatError(error instanceof Error ? error.message : 'The video transcript could not be loaded.')
+      }
+    }
+    void loadVideoDuration()
+    return () => { active = false }
+  }, [chatVideoSourceId])
+
+  const updateChatSource = (material: MaterialRecord, checked: boolean) => {
+    setChatSourceIds((current) => {
+      if (!checked) return current.filter((id) => id !== material.resource_id)
+      if (material.source_type !== 'video') return [...new Set([...current, material.resource_id])]
+      const videoIds = new Set(materials.filter((item) => item.source_type === 'video').map((item) => item.resource_id))
+      return [...current.filter((id) => !videoIds.has(id)), material.resource_id]
+    })
+    if (material.source_type === 'video') {
+      setChatVideoSourceId(checked ? material.resource_id : '')
+      if (!checked) {
+        setChatVideoDuration(0)
+        setChatPlaybackSeconds(0)
+      }
+    }
+  }
 
   const selectFile = (file: File) => {
     if (!ACCEPTED_EXTENSIONS.includes(fileExtension(file.name))) {
@@ -287,7 +336,7 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [uploadedResourceId, extractionStatus, loadExtractedContent, activeYoutubeUrl])
+  }, [uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
@@ -320,6 +369,10 @@ function App() {
           session_id: chatSessionId,
           question,
           allowed_source_ids: chatSourceIds,
+          ...(chatVideoSourceId ? {
+            video_source_id: chatVideoSourceId,
+            playback_seconds: chatPlaybackSeconds,
+          } : {}),
         }),
       })
       const payload = await response.json()
@@ -353,7 +406,14 @@ function App() {
       setChatSessionId(payload.session_id)
       setChatMessages(payload.messages || [])
       const readyIds = new Set(materials.filter((item) => item.status === 'ready').map((item) => item.resource_id))
-      setChatSourceIds((payload.source_ids || []).filter((id: string) => readyIds.has(id)))
+      const restoredIds = (payload.source_ids || []).filter((id: string) => readyIds.has(id))
+      setChatSourceIds(restoredIds)
+      const restoredVideo = materials.find((item) => restoredIds.includes(item.resource_id) && item.source_type === 'video')
+      setChatVideoSourceId(restoredVideo?.resource_id || '')
+      if (!restoredVideo) {
+        setChatVideoDuration(0)
+        setChatPlaybackSeconds(0)
+      }
       setChatError('')
       document.getElementById('chat')?.scrollIntoView({ behavior: 'smooth' })
     } catch (error) {
@@ -383,6 +443,11 @@ function App() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
+      if (chatVideoSourceId === material.resource_id) {
+        setChatVideoSourceId('')
+        setChatVideoDuration(0)
+        setChatPlaybackSeconds(0)
+      }
       if (uploadedResourceId === material.resource_id) {
         setUploadedResourceId('')
         setExtractedContent([])
@@ -605,21 +670,37 @@ function App() {
           <div className="chat-layout">
             <aside className="source-picker">
               <h3>Use ready materials</h3>
-              {materials.filter((item) => item.status === 'ready' && item.source_type !== 'video').length ? (
-                materials.filter((item) => item.status === 'ready' && item.source_type !== 'video').map((material) => (
+              {materials.filter((item) => item.status === 'ready').length ? (
+                materials.filter((item) => item.status === 'ready').map((material) => (
                   <label className="source-option" key={material.resource_id}>
                     <input
                       type="checkbox"
                       checked={chatSourceIds.includes(material.resource_id)}
-                      onChange={(event) => setChatSourceIds((current) => event.target.checked
-                        ? [...new Set([...current, material.resource_id])]
-                        : current.filter((id) => id !== material.resource_id))}
+                      onChange={(event) => updateChatSource(material, event.target.checked)}
                     />
-                    <span title={material.original_filename}>{material.original_filename}</span>
+                    <span title={material.source_url || material.original_filename}>
+                      {material.source_type === 'video' ? 'YouTube · ' : ''}{material.original_filename}
+                    </span>
                   </label>
                 ))
-              ) : <p className="history-muted">Finish processing a document or image to use it in chat.</p>}
-              <p className="history-muted">Video chat will be available with timestamp-aware playback.</p>
+              ) : <p className="history-muted">Finish processing a material to use it in chat.</p>}
+              {chatVideoSourceId && (
+                <div className="video-chat-scope">
+                  <label htmlFor="video-playback-position">
+                    Use transcript through <strong>{formatTimestamp(chatPlaybackSeconds)}</strong>
+                  </label>
+                  <input
+                    id="video-playback-position"
+                    type="range"
+                    min="0"
+                    max={Math.max(1, Math.ceil(chatVideoDuration))}
+                    value={Math.min(chatPlaybackSeconds, Math.max(1, Math.ceil(chatVideoDuration)))}
+                    onChange={(event) => setChatPlaybackSeconds(Number(event.target.value))}
+                    disabled={chatVideoDuration <= 0}
+                  />
+                  <small>Defaults to the full processed video. Move left to limit answers to what you have watched.</small>
+                </div>
+              )}
             </aside>
             <div className="chat-panel">
               <div className="chat-messages" aria-live="polite">
@@ -632,7 +713,9 @@ function App() {
                         const sourceName = materials.find((material) => material.resource_id === citation.source_id)?.original_filename || 'Material'
                         const location = citation.page ? ` · page ${citation.page}`
                           : citation.slide ? ` · slide ${citation.slide}`
-                            : citation.image ? ` · image ${citation.image}` : ''
+                            : citation.image ? ` · image ${citation.image}`
+                              : citation.start_seconds !== undefined
+                                ? ` · ${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : ''
                         return `${index ? '; ' : ''}${sourceName}${location}`
                       }).join('')}
                     </small>}
@@ -650,7 +733,7 @@ function App() {
                   aria-label="Question for LearnFlow AI"
                   maxLength={4000}
                 />
-                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim()}>
+                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim() || (Boolean(chatVideoSourceId) && chatVideoDuration <= 0)}>
                   {chatBusy ? 'Thinking…' : 'Ask'}
                 </button>
               </form>

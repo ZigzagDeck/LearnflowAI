@@ -16,7 +16,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Guarded Jina AI embeddings with SQLite lexical/dense rank fusion
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
-YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Amazon Bedrock grounded-answer generation are implemented. Summaries, quizzes, uploaded-video transcription, production authentication, and the chat UI remain incomplete.
+YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Amazon Bedrock grounded chat are implemented. Summaries, quizzes, uploaded-video transcription, and production authentication remain incomplete.
 
 ## Folder guide
 
@@ -154,12 +154,13 @@ Bedrock is the only AWS service used by LearnFlowAI. For the fastest development
 LEARNFLOW_BEDROCK_CHAT_ENABLED=true
 AWS_REGION=us-east-1
 AWS_BEARER_TOKEN_BEDROCK=replace-with-a-new-bedrock-api-key
-LEARNFLOW_BEDROCK_MODEL_ID=amazon.nova-lite-v1:0
+LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions
+LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-3-12b-it
 LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 ```
 
-The backend uses Bedrock Runtime's `Converse` operation and sends at most eight retrieved evidence chunks. Before each request it reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
+The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Set `LEARNFLOW_BEDROCK_API_MODE=converse` only when using a principal authorized for native Bedrock Runtime. At most eight retrieved evidence chunks are sent. Before each request the app reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
 
 `LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only for a private, single-user deployment. The current local authorizer confirms that selected resources exist and are processed, but a public multi-user deployment still needs real sign-in and ownership checks.
 

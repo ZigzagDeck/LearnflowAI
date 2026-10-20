@@ -56,8 +56,12 @@ JINA_MONTHLY_TOKEN_LIMIT = max(
 )
 BEDROCK_CHAT_ENABLED = _environment_flag("LEARNFLOW_BEDROCK_CHAT_ENABLED")
 BEDROCK_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
+BEDROCK_API_MODE = os.getenv(
+    "LEARNFLOW_BEDROCK_API_MODE", "mantle_chat_completions"
+).strip()
+BEDROCK_API_KEY = os.getenv("AWS_BEARER_TOKEN_BEDROCK", "").strip()
 BEDROCK_MODEL_ID = os.getenv(
-    "LEARNFLOW_BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0"
+    "LEARNFLOW_BEDROCK_MODEL_ID", "google.gemma-3-12b-it"
 ).strip()
 BEDROCK_MAX_OUTPUT_TOKENS = max(
     64, min(2_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "600")))

@@ -49,7 +49,7 @@ The retrieval team may provide timestamp-split chunks for better coverage.
 
 ## Local application behavior
 
-The local frontend now offers document and image Q&A, grounded candidate citations,
+The local frontend now offers document, image, and timestamp-scoped YouTube Q&A, grounded candidate citations,
 and a SQLite-backed history of completed chat turns. Chat history can be opened or
 deleted in the History section. The same section lists uploaded materials, saved
 processing errors, and per-material retry or delete controls. Deleting a material
@@ -58,8 +58,8 @@ also removes its extraction cache, normalized chunks, and embedding vectors.
 This remains a single-user local integration: it has no account authentication,
 and saved conversations are not sent as context to later model requests. Each
 question is answered independently against the currently selected ready sources.
-Video chat is not available until a timestamp-aware player provides the playback
-cutoff.
+YouTube chat defaults its playback cutoff to the full processed transcript and
+provides a timestamp slider so retrieval can be limited to material already watched.
 
 ## Still not completed
 

@@ -1,9 +1,9 @@
 # AI model provider gateway
 
 `backend/llm_provider.py` exposes a `ModelProvider` protocol so grounded chat is
-not coupled to one model vendor. LearnFlowAI's default path is
-`BedrockConverseProvider`, which uses the official Boto3 Bedrock Runtime client.
-The older OpenAI-compatible adapter remains available but is not wired by default.
+not coupled to one model vendor. LearnFlowAI's default path is `BedrockProvider`
+through the Bedrock Mantle Chat Completions endpoint. Native Boto3 Bedrock Runtime
+Converse remains available for IAM principals authorized for that operation.
 
 ## Amazon Bedrock configuration
 
@@ -12,11 +12,13 @@ Set these values server-side. Never expose credentials through a `VITE_` variabl
 - `LEARNFLOW_BEDROCK_CHAT_ENABLED=true`
 - `AWS_REGION=us-east-1`
 - `AWS_BEARER_TOKEN_BEDROCK`: a development Bedrock-only API key; omit this when using standard temporary AWS credentials or an IAM role
-- `LEARNFLOW_BEDROCK_MODEL_ID=amazon.nova-lite-v1:0`
+- `LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions` for project API keys, or `converse` for native Runtime authorization
+- `LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-3-12b-it`
 - `LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600`
 - `LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000`
 
-The Bedrock API key or AWS credentials are resolved only by Boto3's normal
+The Bedrock API key is sent only from the backend to the trusted regional Mantle
+endpoint. In `converse` mode, AWS credentials are resolved through Boto3's normal
 credential chain. The browser cannot submit an endpoint, model, or credential.
 
 ## Cost and request boundary
@@ -62,5 +64,5 @@ python -m pip install -r backend/requirements-dev.txt
 python -m pytest backend/tests/test_bedrock_provider.py backend/tests/test_chat_service.py -q
 ```
 
-Tests use a fake Converse client and make no AWS request. Passing mocks do not
+Tests use fake Mantle and Converse clients and make no AWS request. Passing mocks do not
 prove live model access, production authentication, or sentence-level grounding.
