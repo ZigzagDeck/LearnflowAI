@@ -14,8 +14,14 @@ Set these values server-side. Never expose credentials through a `VITE_` variabl
 - `AWS_BEARER_TOKEN_BEDROCK`: a development Bedrock-only API key; omit this when using standard temporary AWS credentials or an IAM role
 - `LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions` for project API keys, or `converse` for native Runtime authorization
 - `LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-4-31b` (Gemma 4 uses Mantle's `/openai/v1` route automatically)
-- `LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=1200` (maximum generated answer length; configurable up to 2000)
+- `LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=5000` (hard maximum; LearnFlow chooses a smaller per-question output budget when appropriate)
 - `LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000`
+
+The response budget is selected from the question rather than fixed: a simple
+question starts around 900 tokens, explanatory questions around 1,800, and
+multi-part questions around 2,800. Explicit requests for comprehensive detail
+can use the configured 5,000-token ceiling. Explicit brief-answer requests stay
+short. These are output ceilings, not targets; the model may finish sooner.
 
 The Bedrock API key is sent only from the backend to the trusted regional Mantle
 endpoint. In `converse` mode, AWS credentials are resolved through Boto3's normal

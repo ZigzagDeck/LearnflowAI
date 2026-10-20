@@ -64,7 +64,7 @@ BEDROCK_MODEL_ID = os.getenv(
     "LEARNFLOW_BEDROCK_MODEL_ID", "google.gemma-4-31b"
 ).strip()
 BEDROCK_MAX_OUTPUT_TOKENS = max(
-    64, min(2_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "1200")))
+    64, min(5_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "5000")))
 )
 BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT = max(
     1,
