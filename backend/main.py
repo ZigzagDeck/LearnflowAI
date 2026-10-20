@@ -1,5 +1,4 @@
 import os
-import asyncio
 from functools import lru_cache
 import hashlib
 import re
@@ -8,14 +7,25 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
-from .extraction import extract_image, extract_pdf, extract_pptx
+from .config import (
+    DATABASE_PATH,
+    EXTRACTION_PIPELINE_VERSION,
+    MAX_UPLOAD_SIZE_BYTES,
+    MAX_UPLOAD_SIZE_MB,
+    UPLOAD_DIR,
+)
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
-from .ocr import OCRUnavailableError, get_ocr_reader
-from .resource_store import ResourceRecord, ResourceStore, ResourceStoreError
+from .resource_store import (
+    ProcessingJob,
+    ResourceRecord,
+    ResourceStore,
+    ResourceStoreError,
+)
 
 
 app = FastAPI(title="LearnFlow AI API")
@@ -30,17 +40,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = Path(__file__).parent / "uploads"
-DATABASE_PATH = Path(
-    os.getenv(
-        "LEARNFLOW_DATABASE_PATH",
-        str(Path(__file__).parent / "data" / "learnflow.db"),
-    )
-)
-MAX_UPLOAD_SIZE_MB = int(os.getenv("LEARNFLOW_MAX_UPLOAD_SIZE_MB", "100"))
-MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-EXTRACTION_TIMEOUT_SECONDS = int(os.getenv("LEARNFLOW_EXTRACTION_TIMEOUT_SECONDS", "180"))
-EXTRACTION_PIPELINE_VERSION = "native-rapidocr-v1"
 DOCUMENT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}\.(pdf|pptx|png|jpe?g)$")
 RESOURCE_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 ALLOWED_EXTENSIONS = {
@@ -78,6 +77,7 @@ def hash_file(path: Path) -> str:
 def material_payload(
     record: ResourceRecord,
     *,
+    job: ProcessingJob | None = None,
     filename: str | None = None,
     deduplicated: bool = False,
 ) -> dict[str, object]:
@@ -95,7 +95,15 @@ def material_payload(
         "source_type": record.source_type,
         "status": record.status,
         "deduplicated": deduplicated,
+        "processing_job": job.public_dict() if job else None,
     }
+
+
+def resource_payload(store: ResourceStore, record: ResourceRecord) -> dict[str, object]:
+    payload = record.public_dict()
+    job = store.get_extraction_job(record.resource_id)
+    payload["processing_job"] = job.public_dict() if job else None
+    return payload
 
 
 @app.get("/health")
@@ -160,8 +168,14 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
             existing_path = UPLOAD_DIR / existing.stored_filename
             if existing_path.is_file():
                 destination.unlink(missing_ok=True)
+                job = store.enqueue_extraction(
+                    existing.resource_id, EXTRACTION_PIPELINE_VERSION
+                )
                 return material_payload(
-                    existing, filename=original_name, deduplicated=True
+                    existing,
+                    job=job,
+                    filename=original_name,
+                    deduplicated=True,
                 )
             store.delete(existing.resource_id)
 
@@ -176,9 +190,16 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
         )
         if not created:
             destination.unlink(missing_ok=True)
-            return material_payload(
-                record, filename=original_name, deduplicated=True
+            job = store.enqueue_extraction(
+                record.resource_id, EXTRACTION_PIPELINE_VERSION
             )
+            return material_payload(
+                record,
+                job=job,
+                filename=original_name,
+                deduplicated=True,
+            )
+        job = store.enqueue_extraction(record.resource_id, EXTRACTION_PIPELINE_VERSION)
     except HTTPException:
         destination.unlink(missing_ok=True)
         raise
@@ -197,18 +218,19 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
     finally:
         await file.close()
 
-    return material_payload(record)
+    return material_payload(record, job=job)
 
 
 @app.get("/materials")
 def list_materials() -> dict[str, list[dict[str, object]]]:
     try:
-        records = get_resource_store().list()
+        store = get_resource_store()
+        records = store.list()
     except ResourceStoreError as error:
         raise HTTPException(
             status_code=503, detail="Local resource metadata storage is unavailable."
         ) from error
-    return {"materials": [record.public_dict() for record in records]}
+    return {"materials": [resource_payload(store, record) for record in records]}
 
 
 @app.get("/materials/{resource_id}/status")
@@ -224,11 +246,66 @@ def material_status(resource_id: str) -> dict[str, object]:
         ) from error
     if record is None:
         raise HTTPException(status_code=404, detail="Resource was not found.")
-    return record.public_dict()
+    return resource_payload(get_resource_store(), record)
+
+
+@app.post("/materials/{resource_id}/process")
+def queue_material_processing(resource_id: str) -> dict[str, object]:
+    normalized_id = resource_id.lower()
+    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
+    try:
+        store = get_resource_store()
+        record = store.get_by_resource_id(normalized_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Resource was not found.")
+        job = store.enqueue_extraction(
+            normalized_id, EXTRACTION_PIPELINE_VERSION, retry_failed=True
+        )
+        record = store.get_by_resource_id(normalized_id)
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Local processing queue is unavailable."
+        ) from error
+    return {
+        "resource_id": normalized_id,
+        "status": record.status if record else "uploaded",
+        "processing_job": job.public_dict(),
+    }
+
+
+@app.get("/materials/{resource_id}/content")
+def material_content(resource_id: str) -> dict[str, object]:
+    normalized_id = resource_id.lower()
+    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
+    try:
+        store = get_resource_store()
+        record = store.get_by_resource_id(normalized_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Resource was not found.")
+        content = store.cached_extraction(normalized_id, EXTRACTION_PIPELINE_VERSION)
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Extracted content is unavailable."
+        ) from error
+    if content is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Material processing has not completed yet.",
+        )
+    return {
+        "resource_id": normalized_id,
+        "source_name": record.original_filename,
+        "extraction_status": "completed",
+        "cached": True,
+        "content": content,
+    }
 
 
 @app.post("/materials/{document_id}/extract")
-async def extract_material(document_id: str) -> dict[str, object]:
+def extract_material(document_id: str):
+    """Compatibility route: queue work and return immediately, or return cache."""
     path, extension = get_uploaded_file(document_id)
 
     try:
@@ -262,74 +339,23 @@ async def extract_material(document_id: str) -> dict[str, object]:
             "cached": True,
             "content": cached_content,
         }
-
     try:
-        store.set_status(resource.resource_id, "processing")
-    except ResourceStoreError as error:
-        raise HTTPException(
-            status_code=503, detail="Local resource metadata storage is unavailable."
-        ) from error
-
-    extractor = {
-        ".pdf": extract_pdf,
-        ".pptx": extract_pptx,
-        ".png": extract_image,
-        ".jpg": extract_image,
-        ".jpeg": extract_image,
-    }[extension]
-    try:
-        content = await asyncio.wait_for(
-            run_in_threadpool(extractor, path, get_ocr_reader()),
-            timeout=EXTRACTION_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError as error:
-        store.set_status(resource.resource_id, "failed", "Extraction timed out.")
-        raise HTTPException(
-            status_code=408,
-            detail="Extraction took too long. Try a smaller document.",
-        ) from error
-    except (OSError, ValueError) as error:
-        store.set_status(resource.resource_id, "failed", "Extraction failed.")
-        raise HTTPException(
-            status_code=422,
-            detail=f"Could not extract text from this file: {error}",
-        ) from error
-    except OCRUnavailableError as error:
-        store.set_status(resource.resource_id, "failed", "Local OCR is unavailable.")
-        raise HTTPException(
-            status_code=503,
-            detail="Local OCR is unavailable. Install the backend OCR dependencies and retry.",
-        ) from error
-    except Exception as error:
-        store.set_status(resource.resource_id, "failed", "Extraction failed.")
-        raise HTTPException(
-            status_code=422,
-            detail="The material could not be processed.",
-        ) from error
-
-    if not any(item["has_text"] for item in content):
-        unit_name = {".pdf": "pages", ".pptx": "slides"}.get(extension, "image")
-        store.set_status(resource.resource_id, "failed", "No readable text was found.")
-        raise HTTPException(
-            status_code=422,
-            detail=f"No readable text was found in this material's {unit_name} after text extraction and OCR.",
-        )
-
-    try:
-        store.save_extraction(
-            resource.resource_id, content, EXTRACTION_PIPELINE_VERSION
+        job = store.enqueue_extraction(
+            resource.resource_id, EXTRACTION_PIPELINE_VERSION, retry_failed=True
         )
     except ResourceStoreError as error:
         raise HTTPException(
-            status_code=503, detail="Extracted content could not be cached locally."
+            status_code=503, detail="Local processing queue is unavailable."
         ) from error
-
-    return {
-        "document_id": path.name,
-        "resource_id": resource.resource_id,
-        "filename": path.name,
-        "source_name": resource.original_filename,
-        "extraction_status": "completed",
-        "cached": False,
-        "content": content,
-    }
+    return JSONResponse(
+        status_code=202,
+        content={
+            "document_id": path.name,
+            "resource_id": resource.resource_id,
+            "filename": path.name,
+            "source_name": resource.original_filename,
+            "extraction_status": job.status,
+            "cached": False,
+            "processing_job": job.public_dict(),
+        },
+    )

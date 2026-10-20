@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import './App.css'
 
@@ -8,7 +8,7 @@ const ACCEPTED_EXTENSIONS = ['.pdf', '.pptx', '.png', '.jpg', '.jpeg']
 const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
 
 type UploadStatus = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
-type ExtractionStatus = 'idle' | 'extracting' | 'success' | 'error'
+type ExtractionStatus = 'idle' | 'queued' | 'processing' | 'success' | 'error'
 
 type ExtractedUnit = {
   reference_type: 'page' | 'slide' | 'image'
@@ -35,8 +35,9 @@ function App() {
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [isDragging, setIsDragging] = useState(false)
-  const [uploadedDocumentId, setUploadedDocumentId] = useState('')
+  const [uploadedResourceId, setUploadedResourceId] = useState('')
   const [extractionStatus, setExtractionStatus] = useState<ExtractionStatus>('idle')
+  const [processingProgress, setProcessingProgress] = useState(0)
   const [extractionMessage, setExtractionMessage] = useState('')
   const [extractedContent, setExtractedContent] = useState<ExtractedUnit[]>([])
 
@@ -57,8 +58,9 @@ function App() {
     setStatus('ready')
     setProgress(0)
     setMessage('')
-    setUploadedDocumentId('')
+    setUploadedResourceId('')
     setExtractionStatus('idle')
+    setProcessingProgress(0)
     setExtractionMessage('')
     setExtractedContent([])
   }
@@ -79,10 +81,11 @@ function App() {
         const response = JSON.parse(request.responseText)
         setStatus('success')
         setProgress(100)
-        setUploadedDocumentId(response.stored_filename)
+        setUploadedResourceId(response.resource_id)
+        setExtractionStatus(response.processing_job?.status === 'completed' ? 'queued' : (response.processing_job?.status || 'queued'))
         setMessage(response.deduplicated
           ? 'This material already exists. Its saved processing result will be reused.'
-          : 'Uploaded securely. You can now process its text and images.')
+          : 'Uploaded securely. Local text extraction and OCR have been queued automatically.')
       } else {
         let detail = 'The upload could not be completed. Please try again.'
         try {
@@ -104,29 +107,80 @@ function App() {
     request.send(formData)
   }
 
-  const extractMaterial = async () => {
-    if (!uploadedDocumentId || !selectedFile || extractionStatus === 'extracting') return
+  const loadExtractedContent = useCallback(async (resourceId: string) => {
+    const response = await fetch(`${API_BASE_URL}/materials/${resourceId}/content`)
+    const payload = await response.json()
+    if (!response.ok) throw new Error(payload.detail || 'The processed content could not be loaded.')
+    setExtractedContent(payload.content)
+    setExtractionStatus('success')
+    setProcessingProgress(100)
+    const extension = selectedFile ? fileExtension(selectedFile.name) : ''
+    const units = extension === '.pdf' ? 'pages' : extension === '.pptx' ? 'slides' : 'image'
+    setExtractionMessage(`Processed ${payload.content.length} ${units} with text extraction and OCR.`)
+  }, [selectedFile])
 
-    setExtractionStatus('extracting')
-    setExtractionMessage('Extracting text and scanning images locally with OCR...')
-    setExtractedContent([])
+  useEffect(() => {
+    if (!uploadedResourceId || !['queued', 'processing'].includes(extractionStatus)) return
+    let active = true
+    let polling = false
 
+    const poll = async () => {
+      if (polling) return
+      polling = true
+      try {
+        const response = await fetch(`${API_BASE_URL}/materials/${uploadedResourceId}/status`)
+        const payload = await response.json()
+        if (!response.ok) throw new Error(payload.detail || 'Processing status is unavailable.')
+        if (!active) return
+        const job = payload.processing_job
+        setProcessingProgress(job?.progress_percent || 0)
+        if (payload.status === 'ready' || job?.status === 'completed') {
+          await loadExtractedContent(uploadedResourceId)
+        } else if (payload.status === 'failed' || job?.status === 'failed') {
+          setExtractionStatus('error')
+          setExtractionMessage(job?.error || payload.error || 'Local processing failed. You can retry it.')
+        } else if (job?.status === 'processing') {
+          setExtractionStatus('processing')
+          setExtractionMessage(job.progress_total
+            ? `Extracting text and scanning visual content locally… ${job.progress_current} of ${job.progress_total}`
+            : 'Starting local text extraction and OCR…')
+        } else {
+          setExtractionStatus('queued')
+          setExtractionMessage('Waiting for the local processing worker…')
+        }
+      } catch (error) {
+        if (active) {
+          setExtractionStatus('error')
+          setExtractionMessage(error instanceof Error ? error.message : 'Processing status is unavailable.')
+        }
+      } finally {
+        polling = false
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => void poll(), 1000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [uploadedResourceId, extractionStatus, loadExtractedContent])
+
+  const retryProcessing = async () => {
+    if (!uploadedResourceId || extractionStatus !== 'error') return
+    setExtractionStatus('queued')
+    setProcessingProgress(0)
+    setExtractionMessage('Re-queuing local text extraction and OCR…')
     try {
-      const response = await fetch(`${API_BASE_URL}/materials/${encodeURIComponent(uploadedDocumentId)}/extract`, {
+      const response = await fetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
       })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The text could not be extracted.')
-      setExtractedContent(payload.content)
-      setExtractionStatus('success')
-      const extension = fileExtension(selectedFile.name)
-      const units = extension === '.pdf' ? 'pages' : extension === '.pptx' ? 'slides' : 'image'
-      setExtractionMessage(payload.cached
-        ? `Loaded the saved result for ${payload.content.length} ${units}; OCR was not repeated.`
-        : `Processed ${payload.content.length} ${units} with text extraction and OCR.`)
+      if (!response.ok) throw new Error(payload.detail || 'The material could not be re-queued.')
+      setExtractionMessage('Waiting for the local processing worker…')
     } catch (error) {
       setExtractionStatus('error')
-      setExtractionMessage(error instanceof Error ? error.message : 'The text could not be extracted.')
+      setExtractionMessage(error instanceof Error ? error.message : 'The material could not be re-queued.')
     }
   }
 
@@ -224,10 +278,25 @@ function App() {
                 <button className="submit-upload" type="button" onClick={uploadFile} disabled={status === 'uploading' || status === 'success'}>
                   {status === 'uploading' ? `${progress}%` : status === 'success' ? 'Uploaded' : 'Upload material'}
                 </button>
-                {uploadedDocumentId && (
-                  <button className="extract-button" type="button" onClick={extractMaterial} disabled={extractionStatus === 'extracting'}>
-                    {extractionStatus === 'extracting' ? 'Processing locally...' : extractionStatus === 'success' ? 'Processing complete' : 'Extract text + OCR'}
-                  </button>
+                {uploadedResourceId && (
+                  <>
+                    {(extractionStatus === 'queued' || extractionStatus === 'processing') && (
+                      <div className="progress-track" aria-label={`Processing ${processingProgress}%`}>
+                        <div style={{ width: `${processingProgress}%` }} />
+                      </div>
+                    )}
+                    <button
+                      className="extract-button"
+                      type="button"
+                      onClick={retryProcessing}
+                      disabled={extractionStatus !== 'error'}
+                    >
+                      {extractionStatus === 'queued' ? 'Queued for OCR'
+                        : extractionStatus === 'processing' ? `Processing locally · ${processingProgress}%`
+                          : extractionStatus === 'success' ? 'Text + OCR complete'
+                            : 'Retry text + OCR'}
+                    </button>
+                  </>
                 )}
               </div>
             )}

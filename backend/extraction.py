@@ -1,5 +1,6 @@
 from pathlib import Path
 from hashlib import sha256
+from typing import Callable
 
 import pymupdf
 from pptx import Presentation
@@ -12,6 +13,7 @@ MAX_EXTRACTION_UNITS = 500
 MAX_EXTRACTED_CHARACTERS = 2_000_000
 PDF_OCR_DPI = 180
 MAX_RENDERED_PAGE_PIXELS = 20_000_000
+ProgressCallback = Callable[[int, int], None]
 
 
 def _merge_native_and_ocr(native_text: str, ocr_text: str) -> str:
@@ -67,7 +69,9 @@ def _content_record(
     }
 
 
-def extract_pdf(path: Path, ocr: OCRReader) -> list[dict[str, int | str | bool]]:
+def extract_pdf(
+    path: Path, ocr: OCRReader, progress: ProgressCallback | None = None
+) -> list[dict[str, int | str | bool]]:
     pages: list[dict[str, int | str | bool]] = []
     character_count = 0
 
@@ -90,11 +94,15 @@ def extract_pdf(path: Path, ocr: OCRReader) -> list[dict[str, int | str | bool]]
                     "This document contains too much text to extract in one request."
                 )
             pages.append(record)
+            if progress:
+                progress(page_number, document.page_count)
 
     return pages
 
 
-def extract_pptx(path: Path, ocr: OCRReader) -> list[dict[str, int | str | bool]]:
+def extract_pptx(
+    path: Path, ocr: OCRReader, progress: ProgressCallback | None = None
+) -> list[dict[str, int | str | bool]]:
     slides: list[dict[str, int | str | bool]] = []
     character_count = 0
     presentation = Presentation(path)
@@ -136,10 +144,16 @@ def extract_pptx(path: Path, ocr: OCRReader) -> list[dict[str, int | str | bool]
                 "This presentation contains too much text to extract in one request."
             )
         slides.append(record)
+        if progress:
+            progress(slide_number, len(presentation.slides))
 
     return slides
 
 
-def extract_image(path: Path, ocr: OCRReader) -> list[dict[str, int | str | bool]]:
+def extract_image(
+    path: Path, ocr: OCRReader, progress: ProgressCallback | None = None
+) -> list[dict[str, int | str | bool]]:
     text = ocr.read_text(path)
+    if progress:
+        progress(1, 1)
     return [_content_record("image", 1, "", text, ocr_applied=True)]

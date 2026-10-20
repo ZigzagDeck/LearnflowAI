@@ -1,9 +1,10 @@
 """SQLite-backed material metadata and extraction cache."""
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
 import sqlite3
+import uuid
 
 
 VALID_STATUSES = {"uploaded", "processing", "ready", "failed"}
@@ -36,6 +37,32 @@ class ResourceRecord:
         return payload
 
 
+@dataclass(frozen=True)
+class ProcessingJob:
+    job_id: str
+    resource_id: str
+    pipeline_version: str
+    status: str
+    attempts: int
+    progress_current: int
+    progress_total: int | None
+    error: str | None
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    completed_at: str | None
+
+    def public_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        if self.progress_total:
+            payload["progress_percent"] = min(
+                100, round(self.progress_current * 100 / self.progress_total)
+            )
+        else:
+            payload["progress_percent"] = 0
+        return payload
+
+
 class ResourceStore:
     def __init__(self, database_path: Path):
         self.database_path = database_path
@@ -48,6 +75,7 @@ class ResourceStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=10)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys=ON")
         return connection
 
     def _initialize(self) -> None:
@@ -87,6 +115,33 @@ class ResourceStore:
                 "CREATE INDEX IF NOT EXISTS idx_resources_updated_at "
                 "ON resources(updated_at DESC)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processing_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    resource_id TEXT NOT NULL UNIQUE,
+                    pipeline_version TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN ('queued', 'processing', 'completed', 'failed')
+                    ),
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+                    progress_current INTEGER NOT NULL DEFAULT 0
+                        CHECK (progress_current >= 0),
+                    progress_total INTEGER CHECK (progress_total > 0),
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    FOREIGN KEY(resource_id) REFERENCES resources(resource_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_processing_jobs_status_created "
+                "ON processing_jobs(status, created_at)"
+            )
 
     @staticmethod
     def _record(row: sqlite3.Row | None) -> ResourceRecord | None:
@@ -106,6 +161,25 @@ class ResourceStore:
             extraction_version=row["extraction_version"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+        )
+
+    @staticmethod
+    def _job(row: sqlite3.Row | None) -> ProcessingJob | None:
+        if row is None:
+            return None
+        return ProcessingJob(
+            job_id=row["job_id"],
+            resource_id=row["resource_id"],
+            pipeline_version=row["pipeline_version"],
+            status=row["status"],
+            attempts=row["attempts"],
+            progress_current=row["progress_current"],
+            progress_total=row["progress_total"],
+            error=row["error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
         )
 
     def find_by_hash(self, content_hash: str) -> ResourceRecord | None:
@@ -273,3 +347,253 @@ class ResourceStore:
             return value
         except (sqlite3.Error, json.JSONDecodeError) as exc:
             raise ResourceStoreError("Could not read cached extracted content.") from exc
+
+    def enqueue_extraction(
+        self,
+        resource_id: str,
+        pipeline_version: str,
+        *,
+        retry_failed: bool = False,
+    ) -> ProcessingJob:
+        """Create one durable extraction job per resource, or explicitly retry it."""
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                resource = connection.execute(
+                    "SELECT * FROM resources WHERE resource_id = ?", (resource_id,)
+                ).fetchone()
+                if resource is None:
+                    raise ResourceStoreError("Resource metadata was not found.")
+
+                existing = connection.execute(
+                    "SELECT * FROM processing_jobs WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+                cached_for_version = (
+                    resource["status"] == "ready"
+                    and resource["extraction_json"] is not None
+                    and resource["extraction_version"] == pipeline_version
+                )
+
+                if existing is None:
+                    status = "completed" if cached_for_version else "queued"
+                    completed_at = now if cached_for_version else None
+                    connection.execute(
+                        """
+                        INSERT INTO processing_jobs (
+                            job_id, resource_id, pipeline_version, status,
+                            attempts, progress_current, progress_total, error,
+                            created_at, updated_at, started_at, completed_at
+                        ) VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, ?, ?, NULL, ?)
+                        """,
+                        (
+                            uuid.uuid4().hex,
+                            resource_id,
+                            pipeline_version,
+                            status,
+                            now,
+                            now,
+                            completed_at,
+                        ),
+                    )
+                elif cached_for_version:
+                    connection.execute(
+                        """
+                        UPDATE processing_jobs
+                        SET pipeline_version = ?, status = 'completed', error = NULL,
+                            updated_at = ?, completed_at = ?
+                        WHERE resource_id = ?
+                        """,
+                        (pipeline_version, now, now, resource_id),
+                    )
+                elif (
+                    existing["pipeline_version"] != pipeline_version
+                    or (existing["status"] == "failed" and retry_failed)
+                ):
+                    connection.execute(
+                        """
+                        UPDATE processing_jobs
+                        SET pipeline_version = ?, status = 'queued', attempts = 0,
+                            progress_current = 0, progress_total = NULL, error = NULL,
+                            updated_at = ?, started_at = NULL, completed_at = NULL
+                        WHERE resource_id = ?
+                        """,
+                        (pipeline_version, now, resource_id),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE resources
+                        SET status = 'uploaded', error = NULL, updated_at = ?
+                        WHERE resource_id = ?
+                        """,
+                        (now, resource_id),
+                    )
+
+                row = connection.execute(
+                    "SELECT * FROM processing_jobs WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+            job = self._job(row)
+            if job is None:
+                raise ResourceStoreError("Could not queue resource processing.")
+            return job
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not queue resource processing.") from exc
+
+    def get_extraction_job(self, resource_id: str) -> ProcessingJob | None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM processing_jobs WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+            return self._job(row)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read processing status.") from exc
+
+    def claim_next_extraction(self) -> ProcessingJob | None:
+        """Atomically claim work while allowing at most one processing job."""
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                active = connection.execute(
+                    "SELECT 1 FROM processing_jobs WHERE status = 'processing' LIMIT 1"
+                ).fetchone()
+                if active is not None:
+                    return None
+                row = connection.execute(
+                    """
+                    SELECT * FROM processing_jobs
+                    WHERE status = 'queued'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if row is None:
+                    return None
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'processing', attempts = attempts + 1,
+                        progress_current = 0, progress_total = NULL, error = NULL,
+                        updated_at = ?, started_at = ?, completed_at = NULL
+                    WHERE job_id = ?
+                    """,
+                    (now, now, row["job_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE resources
+                    SET status = 'processing', error = NULL, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    (now, row["resource_id"]),
+                )
+                claimed = connection.execute(
+                    "SELECT * FROM processing_jobs WHERE job_id = ?",
+                    (row["job_id"],),
+                ).fetchone()
+            return self._job(claimed)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not claim queued processing work.") from exc
+
+    def update_job_progress(self, job_id: str, current: int, total: int) -> None:
+        if current < 0 or total <= 0 or current > total:
+            raise ValueError("Invalid processing progress.")
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET progress_current = ?, progress_total = ?, updated_at = ?
+                    WHERE job_id = ? AND status = 'processing'
+                    """,
+                    (current, total, now, job_id),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not update processing progress.") from exc
+
+    def complete_job(self, job_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'completed', error = NULL, updated_at = ?,
+                        completed_at = ?, progress_current = CASE
+                            WHEN progress_total IS NULL THEN progress_current
+                            ELSE progress_total
+                        END
+                    WHERE job_id = ? AND status = 'processing'
+                    """,
+                    (now, now, job_id),
+                )
+            if cursor.rowcount != 1:
+                raise ResourceStoreError("Processing job was not active.")
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not complete processing work.") from exc
+
+    def fail_job(self, job_id: str, resource_id: str, error: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'failed', error = ?, updated_at = ?, completed_at = ?
+                    WHERE job_id = ?
+                    """,
+                    (error, now, now, job_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE resources
+                    SET status = 'failed', error = ?, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    (error, now, resource_id),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not record processing failure.") from exc
+
+    def recover_interrupted_jobs(self, stale_after_seconds: int) -> int:
+        """Requeue jobs whose worker stopped updating them before the cutoff."""
+        cutoff = (datetime.now(UTC) - timedelta(seconds=stale_after_seconds)).isoformat()
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    """
+                    SELECT resource_id FROM processing_jobs
+                    WHERE status = 'processing' AND updated_at < ?
+                    """,
+                    (cutoff,),
+                ).fetchall()
+                resource_ids = [row["resource_id"] for row in rows]
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET status = 'queued', error = 'Interrupted processing was resumed.',
+                        progress_current = 0, progress_total = NULL,
+                        updated_at = ?, started_at = NULL, completed_at = NULL
+                    WHERE status = 'processing' AND updated_at < ?
+                    """,
+                    (now, cutoff),
+                )
+                connection.executemany(
+                    """
+                    UPDATE resources
+                    SET status = 'uploaded', error = NULL, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    [(now, resource_id) for resource_id in resource_ids],
+                )
+            return len(resource_ids)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not recover interrupted processing.") from exc

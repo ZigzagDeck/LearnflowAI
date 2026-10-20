@@ -53,7 +53,7 @@ h2 { margin-bottom: 0; color: #1e3830; font-size: 20px; letter-spacing: -0.5px; 
 .submit-upload { width: 100%; margin-top: 11px; padding: 9px; color: #287b68; background: #fff; border: 1px solid #9fc7b3; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 600; }
 .submit-upload:hover:not(:disabled) { background: #f4fbf6; }.submit-upload:disabled { cursor: default; opacity: .65; }
 .extract-button { width: 100%; margin-top: 8px; padding: 9px; color: #fff; background: #4f9b83; border: 0; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 600; }.extract-button:hover:not(:disabled) { background: #3b836e; }.extract-button:disabled { cursor: default; opacity: .65; }
-.upload-message { margin: 12px 0 0; font-size: 11px; line-height: 1.45; }.upload-message.error { color: #a65349; }.upload-message.success { color: #287b68; }.upload-message.uploading, .upload-message.extracting { color: #568778; }
+.upload-message { margin: 12px 0 0; font-size: 11px; line-height: 1.45; }.upload-message.error { color: #a65349; }.upload-message.success { color: #287b68; }.upload-message.uploading, .upload-message.queued, .upload-message.processing { color: #568778; }
 .workspace-header { display: flex; align-items: flex-start; justify-content: space-between; }
 .status-pill { display: flex; align-items: center; gap: 7px; padding: 6px 10px; color: #84948d; background: #f2f6f3; border-radius: 20px; font-size: 11px; }
 .status-pill span { width: 6px; height: 6px; background: #a7b9af; border-radius: 50%; }

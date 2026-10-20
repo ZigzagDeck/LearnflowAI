@@ -6,6 +6,12 @@ from pptx import Presentation
 from PIL import Image
 from fastapi.testclient import TestClient
 import backend.main as api
+from backend.processing import process_next_job
+
+
+class EmptyOCR:
+    def read_text(self, image):
+        return ""
 
 
 @pytest.fixture()
@@ -16,6 +22,14 @@ def client(tmp_path, monkeypatch):
 
 def post(client, filename, data):
     return client.post("/materials/upload", files={"file": (filename, data)})
+
+
+def run_worker_once(directory, ocr=None):
+    return process_next_job(
+        api.get_resource_store(),
+        directory,
+        ocr_factory=lambda: ocr or EmptyOCR(),
+    )
 
 
 def pdf_bytes():
@@ -75,8 +89,11 @@ def test_upload_and_extract_real_content(client, ext, contents, kind):
     response = post(api_client, f"lesson.{ext}", contents())
     assert response.status_code == 200, response.text
     source = response.json()["stored_filename"]
+    resource_id = response.json()["resource_id"]
     assert (directory / source).is_file()
-    output = api_client.post(f"/materials/{source}/extract")
+    assert api_client.post(f"/materials/{source}/extract").status_code == 202
+    run_worker_once(directory)
+    output = api_client.get(f"/materials/{resource_id}/content")
     assert output.status_code == 200, output.text
     assert output.json()["content"][0]["reference_type"] == kind
     assert output.json()["content"][0]["reference_number"] == 1
@@ -94,12 +111,13 @@ def test_accepts_supported_images(client, filename, format_name, monkeypatch):
         def read_text(self, image):
             return "Input Validate Output"
 
-    monkeypatch.setattr(api, "get_ocr_reader", lambda: ImageOCR())
     response = post(api_client, filename, image_bytes(format_name))
     assert response.status_code == 200, response.text
     source = response.json()["stored_filename"]
+    resource_id = response.json()["resource_id"]
     assert (directory / source).is_file()
-    output = api_client.post(f"/materials/{source}/extract")
+    run_worker_once(directory, ImageOCR())
+    output = api_client.get(f"/materials/{resource_id}/content")
     assert output.status_code == 200, output.text
     assert output.json()["content"][0]["reference_type"] == "image"
     assert output.json()["content"][0]["text"] == "Input Validate Output"

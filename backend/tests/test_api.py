@@ -10,6 +10,12 @@ from fastapi.testclient import TestClient
 from pptx import Presentation
 
 import backend.main as backend_main
+from backend.processing import process_next_job
+
+
+class EmptyOCR:
+    def read_text(self, image):
+        return ""
 
 
 @pytest.fixture()
@@ -41,6 +47,14 @@ def upload(client, name, content):
     return client.post("/materials/upload", files={"file": (name, content)})
 
 
+def run_worker_once(ocr=None):
+    return process_next_job(
+        backend_main.get_resource_store(),
+        backend_main.UPLOAD_DIR,
+        ocr_factory=lambda: ocr or EmptyOCR(),
+    )
+
+
 def test_health_check(client):
     assert client.get("/health").json() == {"status": "ok"}
 
@@ -49,8 +63,12 @@ def test_upload_and_extract_pdf_with_page_reference(client):
     response = upload(client, "lecture.pdf", make_pdf())
     assert response.status_code == 200
     identifier = response.json()["stored_filename"]
+    resource_id = response.json()["resource_id"]
     assert identifier.endswith(".pdf")
-    result = client.post(f"/materials/{identifier}/extract")
+    queued = client.post(f"/materials/{identifier}/extract")
+    assert queued.status_code == 202
+    run_worker_once()
+    result = client.get(f"/materials/{resource_id}/content")
     assert result.status_code == 200
     assert result.json()["content"][0]["reference_type"] == "page"
     assert result.json()["content"][0]["reference_number"] == 1
@@ -61,7 +79,10 @@ def test_upload_and_extract_pptx_with_slide_reference(client):
     response = upload(client, "lecture.pptx", make_pptx())
     assert response.status_code == 200
     identifier = response.json()["stored_filename"]
-    result = client.post(f"/materials/{identifier}/extract")
+    resource_id = response.json()["resource_id"]
+    assert client.post(f"/materials/{identifier}/extract").status_code == 202
+    run_worker_once()
+    result = client.get(f"/materials/{resource_id}/content")
     assert result.status_code == 200
     assert result.json()["content"][0]["reference_type"] == "slide"
     assert result.json()["content"][0]["reference_number"] == 1
@@ -90,18 +111,20 @@ def test_extraction_result_is_cached(client, monkeypatch):
             return ""
 
     ocr = CountingOCR()
-    monkeypatch.setattr(backend_main, "get_ocr_reader", lambda: ocr)
     response = upload(client, "lecture.pdf", make_pdf())
     identifier = response.json()["stored_filename"]
+    resource_id = response.json()["resource_id"]
 
     first = client.post(f"/materials/{identifier}/extract")
+    assert first.status_code == 202
+    run_worker_once(ocr)
     second = client.post(f"/materials/{identifier}/extract")
 
-    assert first.status_code == 200
-    assert first.json()["cached"] is False
     assert second.status_code == 200
     assert second.json()["cached"] is True
-    assert second.json()["content"] == first.json()["content"]
+    assert second.json()["content"] == client.get(
+        f"/materials/{resource_id}/content"
+    ).json()["content"]
     assert ocr.calls == 1
 
 
@@ -117,6 +140,7 @@ def test_material_list_and_status_are_persisted(client):
     assert status.status_code == 200
     assert status.json()["original_filename"] == "lecture.pdf"
     assert status.json()["status"] == "uploaded"
+    assert status.json()["processing_job"]["status"] == "queued"
     assert "content_hash" not in status.json()
 
 
@@ -149,17 +173,12 @@ def test_malformed_pdf_is_rejected_during_extraction(client):
         # Hardened content validation may reject a forged PDF at upload time.
         return
     assert response.status_code == 200
-    identifier = response.json()["stored_filename"]
-    result = client.post(f"/materials/{identifier}/extract")
-    assert result.status_code == 422
+    run_worker_once()
+    result = client.get(f"/materials/{response.json()['resource_id']}/status")
+    assert result.json()["status"] == "failed"
 
 
 def test_legacy_ppt_has_explicit_conversion_error(client):
     response = upload(client, "legacy.ppt", b"old PowerPoint content")
-    if response.status_code == 415:
-        # A stricter upload validator can reject the synthetic invalid PPT.
-        return
-    assert response.status_code == 200
-    result = client.post(f"/materials/{response.json()['stored_filename']}/extract")
-    assert result.status_code == 415
-    assert "pptx" in result.json()["detail"]
+    assert response.status_code == 415
+    assert "PPTX" in response.json()["detail"]
