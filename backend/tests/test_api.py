@@ -73,6 +73,10 @@ def test_upload_and_extract_pdf_with_page_reference(client):
     assert result.json()["content"][0]["reference_type"] == "page"
     assert result.json()["content"][0]["reference_number"] == 1
     assert "LearnFlow lesson notes" in result.json()["content"][0]["text"]
+    chunks = client.get(f"/materials/{resource_id}/chunks")
+    assert chunks.status_code == 200
+    assert chunks.json()["chunks"][0]["reference_type"] == "page"
+    assert chunks.json()["chunks"][0]["reference_number"] == 1
 
 
 def test_upload_and_extract_pptx_with_slide_reference(client):

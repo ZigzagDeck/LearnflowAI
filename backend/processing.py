@@ -3,6 +3,8 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from .chunking import build_chunks
+from .config import CHUNKING_PIPELINE_VERSION, EXTRACTION_PIPELINE_VERSION
 from .extraction import extract_image, extract_pdf, extract_pptx
 from .ocr import OCRReader, OCRUnavailableError, get_ocr_reader
 from .resource_store import ProcessingJob, ResourceStore, ResourceStoreError
@@ -27,32 +29,29 @@ def process_next_job(
         store.fail_job(job.job_id, job.resource_id, "The uploaded material was not found.")
         return store.get_extraction_job(job.resource_id)
 
-    cached = store.cached_extraction(resource.resource_id, job.pipeline_version)
-    if cached is not None:
-        store.complete_job(job.job_id)
-        return store.get_extraction_job(job.resource_id)
-
-    path = upload_dir / resource.stored_filename
-    if not path.is_file():
-        store.fail_job(job.job_id, job.resource_id, "The uploaded material file is missing.")
-        return store.get_extraction_job(job.resource_id)
-
-    extractor = {
-        ".pdf": extract_pdf,
-        ".pptx": extract_pptx,
-        ".png": extract_image,
-        ".jpg": extract_image,
-        ".jpeg": extract_image,
-    }.get(resource.extension)
-    if extractor is None:
-        store.fail_job(job.job_id, job.resource_id, "This material type is not supported.")
-        return store.get_extraction_job(job.resource_id)
-
     def report_progress(current: int, total: int) -> None:
         store.update_job_progress(job.job_id, current, total)
 
     try:
-        content = extractor(path, ocr_factory(), report_progress)
+        cached_content = store.cached_extraction(
+            resource.resource_id, EXTRACTION_PIPELINE_VERSION
+        )
+        content = cached_content
+        if content is None:
+            path = upload_dir / resource.stored_filename
+            if not path.is_file():
+                raise OSError("The uploaded material file is missing.")
+            extractor = {
+                ".pdf": extract_pdf,
+                ".pptx": extract_pptx,
+                ".png": extract_image,
+                ".jpg": extract_image,
+                ".jpeg": extract_image,
+            }.get(resource.extension)
+            if extractor is None:
+                raise ValueError("This material type is not supported.")
+            content = extractor(path, ocr_factory(), report_progress)
+
         if not any(item["has_text"] for item in content):
             unit_name = {".pdf": "pages", ".pptx": "slides"}.get(
                 resource.extension, "image"
@@ -61,9 +60,24 @@ def process_next_job(
                 f"No readable text was found in this material's {unit_name} "
                 "after text extraction and OCR."
             )
-        store.save_extraction(
-            resource.resource_id, content, job.pipeline_version
+        chunks = build_chunks(
+            resource.resource_id,
+            resource.source_type,
+            content,
+            CHUNKING_PIPELINE_VERSION,
         )
+        if cached_content is not None:
+            store.replace_chunks(
+                resource.resource_id, chunks, CHUNKING_PIPELINE_VERSION
+            )
+        else:
+            store.save_processed_content(
+                resource.resource_id,
+                content,
+                EXTRACTION_PIPELINE_VERSION,
+                chunks,
+                CHUNKING_PIPELINE_VERSION,
+            )
         store.complete_job(job.job_id)
     except OCRUnavailableError:
         store.fail_job(

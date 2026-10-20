@@ -6,6 +6,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 
+from .chunking import NormalizedChunk
+
 
 VALID_STATUSES = {"uploaded", "processing", "ready", "failed"}
 
@@ -142,6 +144,32 @@ class ResourceStore:
                 "CREATE INDEX IF NOT EXISTS idx_processing_jobs_status_created "
                 "ON processing_jobs(status, created_at)"
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chunks (
+                    chunk_id TEXT PRIMARY KEY,
+                    resource_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    reference_type TEXT NOT NULL,
+                    reference_number INTEGER NOT NULL CHECK (reference_number > 0),
+                    chunk_index INTEGER NOT NULL CHECK (chunk_index > 0),
+                    text TEXT NOT NULL CHECK (length(text) > 0),
+                    extraction_method TEXT NOT NULL,
+                    chunk_version TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(resource_id) REFERENCES resources(resource_id)
+                        ON DELETE CASCADE,
+                    UNIQUE(
+                        resource_id, chunk_version, reference_type,
+                        reference_number, chunk_index
+                    )
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chunks_resource_reference "
+                "ON chunks(resource_id, reference_type, reference_number, chunk_index)"
+            )
 
     @staticmethod
     def _record(row: sqlite3.Row | None) -> ResourceRecord | None:
@@ -180,6 +208,20 @@ class ResourceStore:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
+        )
+
+    @staticmethod
+    def _chunk(row: sqlite3.Row) -> NormalizedChunk:
+        return NormalizedChunk(
+            chunk_id=row["chunk_id"],
+            resource_id=row["resource_id"],
+            source_type=row["source_type"],
+            reference_type=row["reference_type"],
+            reference_number=row["reference_number"],
+            chunk_index=row["chunk_index"],
+            text=row["text"],
+            extraction_method=row["extraction_method"],
+            chunk_version=row["chunk_version"],
         )
 
     def find_by_hash(self, content_hash: str) -> ResourceRecord | None:
@@ -326,6 +368,143 @@ class ResourceStore:
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not cache extracted content.") from exc
 
+    @staticmethod
+    def _validate_chunks(
+        resource_id: str,
+        chunks: list[NormalizedChunk],
+        chunk_version: str,
+    ) -> None:
+        if not chunks:
+            raise ValueError("Processed content did not produce any searchable chunks.")
+        if any(
+            chunk.resource_id != resource_id
+            or chunk.chunk_version != chunk_version
+            for chunk in chunks
+        ):
+            raise ValueError("Chunk metadata does not match the processed resource.")
+
+    @staticmethod
+    def _insert_chunks(
+        connection: sqlite3.Connection,
+        chunks: list[NormalizedChunk],
+        created_at: str,
+    ) -> None:
+        connection.executemany(
+            """
+            INSERT INTO chunks (
+                chunk_id, resource_id, source_type, reference_type,
+                reference_number, chunk_index, text, extraction_method,
+                chunk_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    chunk.chunk_id,
+                    chunk.resource_id,
+                    chunk.source_type,
+                    chunk.reference_type,
+                    chunk.reference_number,
+                    chunk.chunk_index,
+                    chunk.text,
+                    chunk.extraction_method,
+                    chunk.chunk_version,
+                    created_at,
+                )
+                for chunk in chunks
+            ],
+        )
+
+    def save_processed_content(
+        self,
+        resource_id: str,
+        content: list[dict[str, object]],
+        extraction_version: str,
+        chunks: list[NormalizedChunk],
+        chunk_version: str,
+    ) -> None:
+        """Atomically persist extraction, normalized chunks, and ready status."""
+        self._validate_chunks(resource_id, chunks, chunk_version)
+        now = datetime.now(UTC).isoformat()
+        serialized = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
+                )
+                self._insert_chunks(connection, chunks, now)
+                cursor = connection.execute(
+                    """
+                    UPDATE resources
+                    SET extraction_json = ?, extraction_version = ?,
+                        status = 'ready', error = NULL, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    (serialized, extraction_version, now, resource_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ResourceStoreError("Resource metadata was not found.")
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not persist processed content.") from exc
+
+    def replace_chunks(
+        self,
+        resource_id: str,
+        chunks: list[NormalizedChunk],
+        chunk_version: str,
+    ) -> None:
+        """Backfill or rebuild chunks without repeating cached OCR."""
+        self._validate_chunks(resource_id, chunks, chunk_version)
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                exists = connection.execute(
+                    "SELECT 1 FROM resources WHERE resource_id = ?", (resource_id,)
+                ).fetchone()
+                if exists is None:
+                    raise ResourceStoreError("Resource metadata was not found.")
+                connection.execute(
+                    "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
+                )
+                self._insert_chunks(connection, chunks, now)
+                connection.execute(
+                    """
+                    UPDATE resources
+                    SET status = 'ready', error = NULL, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    (now, resource_id),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not persist normalized chunks.") from exc
+
+    def list_chunks(
+        self, resource_id: str, chunk_version: str | None = None
+    ) -> list[NormalizedChunk]:
+        try:
+            with self._connect() as connection:
+                if chunk_version is None:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM chunks WHERE resource_id = ?
+                        ORDER BY reference_number, chunk_index
+                        """,
+                        (resource_id,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        """
+                        SELECT * FROM chunks
+                        WHERE resource_id = ? AND chunk_version = ?
+                        ORDER BY reference_number, chunk_index
+                        """,
+                        (resource_id, chunk_version),
+                    ).fetchall()
+            return [self._chunk(row) for row in rows]
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read normalized chunks.") from exc
+
     def cached_extraction(
         self, resource_id: str, extraction_version: str
     ) -> list[dict[str, object]] | None:
@@ -334,7 +513,7 @@ class ResourceStore:
                 row = connection.execute(
                     """
                     SELECT extraction_json FROM resources
-                    WHERE resource_id = ? AND status = 'ready'
+                    WHERE resource_id = ? AND status IN ('ready', 'processing')
                         AND extraction_version = ?
                     """,
                     (resource_id, extraction_version),

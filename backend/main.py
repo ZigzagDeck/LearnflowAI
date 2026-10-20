@@ -12,10 +12,12 @@ from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
 from .config import (
+    CHUNKING_PIPELINE_VERSION,
     DATABASE_PATH,
     EXTRACTION_PIPELINE_VERSION,
     MAX_UPLOAD_SIZE_BYTES,
     MAX_UPLOAD_SIZE_MB,
+    PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
 )
 from .file_validation import validate_upload_content
@@ -169,7 +171,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
             if existing_path.is_file():
                 destination.unlink(missing_ok=True)
                 job = store.enqueue_extraction(
-                    existing.resource_id, EXTRACTION_PIPELINE_VERSION
+                    existing.resource_id, PROCESSING_PIPELINE_VERSION
                 )
                 return material_payload(
                     existing,
@@ -191,7 +193,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
         if not created:
             destination.unlink(missing_ok=True)
             job = store.enqueue_extraction(
-                record.resource_id, EXTRACTION_PIPELINE_VERSION
+                record.resource_id, PROCESSING_PIPELINE_VERSION
             )
             return material_payload(
                 record,
@@ -199,7 +201,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
                 filename=original_name,
                 deduplicated=True,
             )
-        job = store.enqueue_extraction(record.resource_id, EXTRACTION_PIPELINE_VERSION)
+        job = store.enqueue_extraction(record.resource_id, PROCESSING_PIPELINE_VERSION)
     except HTTPException:
         destination.unlink(missing_ok=True)
         raise
@@ -260,7 +262,7 @@ def queue_material_processing(resource_id: str) -> dict[str, object]:
         if record is None:
             raise HTTPException(status_code=404, detail="Resource was not found.")
         job = store.enqueue_extraction(
-            normalized_id, EXTRACTION_PIPELINE_VERSION, retry_failed=True
+            normalized_id, PROCESSING_PIPELINE_VERSION, retry_failed=True
         )
         record = store.get_by_resource_id(normalized_id)
     except ResourceStoreError as error:
@@ -303,6 +305,31 @@ def material_content(resource_id: str) -> dict[str, object]:
     }
 
 
+@app.get("/materials/{resource_id}/chunks")
+def material_chunks(resource_id: str) -> dict[str, object]:
+    normalized_id = resource_id.lower()
+    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
+    try:
+        store = get_resource_store()
+        if store.get_by_resource_id(normalized_id) is None:
+            raise HTTPException(status_code=404, detail="Resource was not found.")
+        chunks = store.list_chunks(normalized_id, CHUNKING_PIPELINE_VERSION)
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Normalized material chunks are unavailable."
+        ) from error
+    if not chunks:
+        raise HTTPException(
+            status_code=409, detail="Material chunking has not completed yet."
+        )
+    return {
+        "resource_id": normalized_id,
+        "chunk_version": CHUNKING_PIPELINE_VERSION,
+        "chunks": [chunk.public_dict() for chunk in chunks],
+    }
+
+
 @app.post("/materials/{document_id}/extract")
 def extract_material(document_id: str):
     """Compatibility route: queue work and return immediately, or return cache."""
@@ -341,7 +368,7 @@ def extract_material(document_id: str):
         }
     try:
         job = store.enqueue_extraction(
-            resource.resource_id, EXTRACTION_PIPELINE_VERSION, retry_failed=True
+            resource.resource_id, PROCESSING_PIPELINE_VERSION, retry_failed=True
         )
     except ResourceStoreError as error:
         raise HTTPException(
