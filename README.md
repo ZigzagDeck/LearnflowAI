@@ -14,9 +14,10 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Deterministic semantic-boundary chunks that preserve exact page/slide/image citations
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
 - Guarded Jina AI embeddings with SQLite lexical/dense rank fusion
+- Grounded Bedrock chat and server-scored multiple-choice quizzes with citations
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
-YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Amazon Bedrock grounded chat are implemented. Summaries, quizzes, uploaded-video transcription, and production authentication remain incomplete.
+YouTube caption ingestion, citation-safe local RAG, document OCR, opt-in Amazon Bedrock grounded chat, and grounded quizzes are implemented. Summaries, uploaded-video transcription, and production authentication remain incomplete.
 
 ## Folder guide
 
@@ -30,6 +31,7 @@ YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Ama
 - `backend/chunking.py` - Dependency-free text normalization and bounded, overlapping citation chunks.
 - `backend/embeddings.py` - Guarded Jina REST adapter and opt-in local FastEmbed fallback.
 - `backend/retrieval.py` - Citation-valid lexical and hybrid retrievers for grounded chat.
+- `backend/quiz_service.py` - Grounded quiz generation, private answer-key storage, scoring, explanations, and citations.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
 - `package.json` - Frontend commands and JavaScript dependencies.
@@ -164,6 +166,12 @@ LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Set `LEARNFLOW_BEDROCK_API_MODE=converse` only when using a principal authorized for native Bedrock Runtime. At most eight retrieved evidence chunks are sent. Before each request the app reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
 
 `LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only for a private, single-user deployment. The current local authorizer confirms that selected resources exist and are processed, but a public multi-user deployment still needs real sign-in and ownership checks.
+
+## Grounded quizzes
+
+The Quiz section uses the same ready materials and Bedrock configuration as chat. Select up to 12 sources, choose 3, 5, 8, or 10 questions, then select **Generate quiz**. Generation samples evidence across the selected materials. The browser receives only the question and four options; correct answers remain in local SQLite until the completed attempt is submitted to the scoring endpoint. After submission, the UI shows the score, correct answer, explanation, and source citation for every question.
+
+Quiz generation consumes one bounded Bedrock request. Scoring is local and does not call Bedrock, Jina, Google, or AWS.
 
 ## Test the health endpoint
 

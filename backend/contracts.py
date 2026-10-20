@@ -103,30 +103,47 @@ class ChatResponse(StrictModel):
 
 
 class QuizRequest(StrictModel):
-    session_id: str = Field(min_length=1)
-    video_source_id: str
-    playback_seconds: float = Field(ge=0)
-    allowed_source_ids: list[str] = Field(min_length=1, max_length=30)
+    session_id: str = Field(min_length=1, max_length=128)
+    allowed_source_ids: list[str] = Field(min_length=1, max_length=12)
     count: int = Field(default=3, ge=1, le=10)
 
 
 class QuizQuestion(StrictModel):
-    question: str
+    question_id: str = Field(min_length=1, max_length=64)
+    question: str = Field(min_length=1, max_length=1_000)
     options: list[str] = Field(min_length=2, max_length=6)
-    correct_option_index: int = Field(ge=0)
-    explanation: str
-    citations: list[Citation] = Field(min_length=1)
 
-    @model_validator(mode="after")
-    def valid_correct_index(self):
-        if self.correct_option_index >= len(self.options):
-            raise ValueError("correct_option_index must point to an option")
-        return self
+
+class QuizAnswer(StrictModel):
+    question_id: str = Field(min_length=1, max_length=64)
+    option_index: int = Field(ge=0, le=5)
 
 
 class QuizResponse(StrictModel):
+    quiz_id: str = Field(min_length=1, max_length=64)
     session_id: str
     questions: list[QuizQuestion]
+
+
+class QuizSubmissionRequest(StrictModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    answers: list[QuizAnswer] = Field(min_length=1, max_length=10)
+
+
+class QuizQuestionResult(StrictModel):
+    question_id: str
+    selected_option_index: int = Field(ge=0)
+    correct_option_index: int = Field(ge=0)
+    correct: bool
+    explanation: str
+    citations: list[Citation] = Field(min_length=1)
+
+
+class QuizSubmissionResponse(StrictModel):
+    quiz_id: str
+    score: int = Field(ge=0)
+    total: int = Field(ge=1)
+    questions: list[QuizQuestionResult]
 
 
 class APIError(StrictModel):

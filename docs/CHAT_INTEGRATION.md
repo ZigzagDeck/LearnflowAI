@@ -68,7 +68,7 @@ provides a timestamp slider so retrieval can be limited to material already watc
   disconnected from `/chat` until authorization is real.
 - Model-account connectivity/deployment smoke test
 - Sentence-level citation entailment and hallucination evaluation
-- Quiz API
+- Production identity and per-user source ownership for both chat and quizzes
 
 These remain explicit dependencies. Keep the PR in draft and do not publicly
 enable the route until source ownership and real retrieval are integrated.

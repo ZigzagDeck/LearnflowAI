@@ -61,13 +61,27 @@ PDF page / PPTX slide / video start/end position.
 context to the model. A transcript chunk overlapping the cutoff must be
 trimmed or excluded, not fully returned.
 
-## Proposed quiz API
+## Quiz API
 
-`POST /quiz` uses `session_id`, `video_source_id`,
-`playback_seconds`, `allowed_source_ids` and `count`. It returns
-MCQ questions with `options`, `correct_option_index`, `explanation`
-and evidence citations. The frontend should not expose `correct_option_index`
-before submitting the attempt; scoring endpoint is a future integration detail.
+`POST /quiz` accepts a private local session, one to twelve ready resources, and
+one to ten requested questions:
+
+```json
+{
+  "session_id": "quiz-session-demo",
+  "allowed_source_ids": ["lesson-1", "slides-1"],
+  "count": 5
+}
+```
+
+It returns a `quiz_id` and four-option questions. Correct answers,
+explanations, and citations are deliberately absent from this response and are
+stored server-side.
+
+`POST /quiz/{quiz_id}/submit` accepts exactly one `question_id` and zero-based
+`option_index` for each question. A successful response returns the score plus
+the selected and correct option indices, grounded explanation, and validated
+citations. Each stored attempt can be submitted only once.
 
 ## Security decisions remaining
 

@@ -79,6 +79,19 @@ class ProcessingJob:
 
 
 @dataclass(frozen=True)
+class QuizAttemptRecord:
+    quiz_id: str
+    session_id: str
+    source_ids: list[str]
+    questions: list[dict[str, object]]
+    status: str
+    answers: list[dict[str, object]] | None
+    score: int | None
+    created_at: str
+    submitted_at: str | None
+
+
+@dataclass(frozen=True)
 class ChunkSearchHit:
     chunk: NormalizedChunk
     score: float
@@ -210,6 +223,25 @@ class ResourceStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created "
                 "ON chat_messages(session_id, created_at)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS quiz_attempts (
+                    quiz_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    source_ids_json TEXT NOT NULL,
+                    questions_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (status IN ('ready', 'submitted')),
+                    answers_json TEXT,
+                    score INTEGER,
+                    created_at TEXT NOT NULL,
+                    submitted_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_session_created "
+                "ON quiz_attempts(session_id, created_at DESC)"
             )
             connection.execute(
                 """
@@ -569,6 +601,94 @@ class ResourceStore:
             return cursor.rowcount > 0
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not delete chat history.") from exc
+
+    @staticmethod
+    def _quiz_attempt(row: sqlite3.Row | None) -> QuizAttemptRecord | None:
+        if row is None:
+            return None
+        try:
+            return QuizAttemptRecord(
+                quiz_id=row["quiz_id"],
+                session_id=row["session_id"],
+                source_ids=json.loads(row["source_ids_json"]),
+                questions=json.loads(row["questions_json"]),
+                status=row["status"],
+                answers=(
+                    json.loads(row["answers_json"])
+                    if row["answers_json"] is not None
+                    else None
+                ),
+                score=row["score"],
+                created_at=row["created_at"],
+                submitted_at=row["submitted_at"],
+            )
+        except (json.JSONDecodeError, TypeError, KeyError) as exc:
+            raise ResourceStoreError("Stored quiz data is invalid.") from exc
+
+    def create_quiz_attempt(
+        self,
+        quiz_id: str,
+        session_id: str,
+        source_ids: list[str],
+        questions: list[dict[str, object]],
+    ) -> QuizAttemptRecord:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO quiz_attempts (
+                        quiz_id, session_id, source_ids_json, questions_json,
+                        status, answers_json, score, created_at, submitted_at
+                    ) VALUES (?, ?, ?, ?, 'ready', NULL, NULL, ?, NULL)
+                    """,
+                    (
+                        quiz_id,
+                        session_id,
+                        json.dumps(list(dict.fromkeys(source_ids))),
+                        json.dumps(questions),
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM quiz_attempts WHERE quiz_id = ?", (quiz_id,)
+                ).fetchone()
+            attempt = self._quiz_attempt(row)
+            if attempt is None:
+                raise ResourceStoreError("Could not save generated quiz.")
+            return attempt
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not save generated quiz.") from exc
+
+    def get_quiz_attempt(self, quiz_id: str) -> QuizAttemptRecord | None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM quiz_attempts WHERE quiz_id = ?", (quiz_id,)
+                ).fetchone()
+            return self._quiz_attempt(row)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read generated quiz.") from exc
+
+    def complete_quiz_attempt(
+        self, quiz_id: str, answers: list[dict[str, object]], score: int
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE quiz_attempts
+                    SET status = 'submitted', answers_json = ?, score = ?,
+                        submitted_at = ?
+                    WHERE quiz_id = ? AND status = 'ready'
+                    """,
+                    (json.dumps(answers), score, now, quiz_id),
+                )
+            if cursor.rowcount != 1:
+                raise ResourceStoreError("Quiz was already submitted or was not found.")
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not save quiz result.") from exc
 
     def list(self) -> list[ResourceRecord]:
         try:

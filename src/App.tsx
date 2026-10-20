@@ -57,6 +57,34 @@ type ChatSession = {
   message_count: number
 }
 
+type QuizQuestion = {
+  question_id: string
+  question: string
+  options: string[]
+}
+
+type QuizAttempt = {
+  quiz_id: string
+  session_id: string
+  questions: QuizQuestion[]
+}
+
+type QuizQuestionResult = {
+  question_id: string
+  selected_option_index: number
+  correct_option_index: number
+  correct: boolean
+  explanation: string
+  citations: ChatMessage['citations']
+}
+
+type QuizResult = {
+  quiz_id: string
+  score: number
+  total: number
+  questions: QuizQuestionResult[]
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -106,6 +134,14 @@ function App() {
   const [chatPlaybackSeconds, setChatPlaybackSeconds] = useState(0)
   const [chatBusy, setChatBusy] = useState(false)
   const [chatError, setChatError] = useState('')
+  const [quizSessionId, setQuizSessionId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
+  const [quizSourceIds, setQuizSourceIds] = useState<string[]>([])
+  const [quizCount, setQuizCount] = useState(5)
+  const [quizBusy, setQuizBusy] = useState(false)
+  const [quizError, setQuizError] = useState('')
+  const [quiz, setQuiz] = useState<QuizAttempt | null>(null)
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({})
+  const [quizResult, setQuizResult] = useState<QuizResult | null>(null)
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
@@ -131,6 +167,9 @@ function App() {
       setChatSourceIds((current) => current.length
         ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
         : nextMaterials.filter((item) => item.status === 'ready' && item.source_type !== 'video').map((item) => item.resource_id))
+      setQuizSourceIds((current) => current.length
+        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
+        : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
       setHistoryMessage('')
     } catch (error) {
       setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded.')
@@ -424,6 +463,67 @@ function App() {
     setChatQuestion('')
   }
 
+  const startNewQuiz = () => {
+    setQuizSessionId(crypto.randomUUID().replaceAll('-', ''))
+    setQuiz(null)
+    setQuizAnswers({})
+    setQuizResult(null)
+    setQuizError('')
+  }
+
+  const generateQuiz = async () => {
+    if (quizBusy || quizSourceIds.length === 0) return
+    setQuizBusy(true)
+    setQuizError('')
+    setQuiz(null)
+    setQuizResult(null)
+    setQuizAnswers({})
+    try {
+      const response = await fetch(`${API_BASE_URL}/quiz`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: quizSessionId,
+          allowed_source_ids: quizSourceIds,
+          count: quizCount,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The quiz could not be generated.')
+      setQuiz(payload)
+    } catch (error) {
+      setQuizError(error instanceof Error ? error.message : 'The quiz could not be generated.')
+    } finally {
+      setQuizBusy(false)
+    }
+  }
+
+  const submitQuiz = async () => {
+    if (!quiz || quizBusy || Object.keys(quizAnswers).length !== quiz.questions.length) return
+    setQuizBusy(true)
+    setQuizError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/quiz/${quiz.quiz_id}/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: quiz.session_id,
+          answers: quiz.questions.map((question) => ({
+            question_id: question.question_id,
+            option_index: quizAnswers[question.question_id],
+          })),
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The quiz could not be scored.')
+      setQuizResult(payload)
+    } catch (error) {
+      setQuizError(error instanceof Error ? error.message : 'The quiz could not be scored.')
+    } finally {
+      setQuizBusy(false)
+    }
+  }
+
   const openChatSession = async (sessionId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/chat/history/${sessionId}`)
@@ -469,6 +569,7 @@ function App() {
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
+      setQuizSourceIds((current) => current.filter((id) => id !== material.resource_id))
       if (chatVideoSourceId === material.resource_id) {
         setChatVideoSourceId('')
         setChatVideoDuration(0)
@@ -516,6 +617,7 @@ function App() {
         <div className="nav-links">
           <a className="active" href="#workspace">Workspace</a>
           <a href="#chat">Study chat</a>
+          <a href="#quiz">Quiz</a>
           <a href="#history">History</a>
           <a href="#how-it-works">How it works</a>
         </div>
@@ -768,6 +870,119 @@ function App() {
                   {chatBusy ? 'Thinking…' : 'Ask'}
                 </button>
               </form>
+            </div>
+          </div>
+        </section>
+
+        <section className="quiz-section" id="quiz">
+          <div className="section-heading">
+            <div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div>
+            <button className="secondary-button" type="button" onClick={startNewQuiz}>New quiz</button>
+          </div>
+          <div className="quiz-layout">
+            <aside className="source-picker">
+              <h3>Quiz materials</h3>
+              {materials.filter((item) => item.status === 'ready').length ? (
+                materials.filter((item) => item.status === 'ready').map((material) => (
+                  <label className="source-option" key={material.resource_id}>
+                    <input
+                      type="checkbox"
+                      checked={quizSourceIds.includes(material.resource_id)}
+                      disabled={quizBusy || (!quizSourceIds.includes(material.resource_id) && quizSourceIds.length >= 12)}
+                      onChange={(event) => setQuizSourceIds((current) => event.target.checked
+                        ? [...new Set([...current, material.resource_id])].slice(0, 12)
+                        : current.filter((id) => id !== material.resource_id))}
+                    />
+                    <span title={material.source_url || material.original_filename}>
+                      {material.source_type === 'video' ? 'YouTube · ' : ''}{material.original_filename}
+                    </span>
+                  </label>
+                ))
+              ) : <p className="history-muted">Finish processing a material to generate a quiz.</p>}
+              <div className="quiz-controls">
+                <label htmlFor="quiz-count">Questions</label>
+                <select id="quiz-count" value={quizCount} onChange={(event) => setQuizCount(Number(event.target.value))} disabled={quizBusy}>
+                  <option value={3}>3</option>
+                  <option value={5}>5</option>
+                  <option value={8}>8</option>
+                  <option value={10}>10</option>
+                </select>
+                <button type="button" onClick={() => void generateQuiz()} disabled={quizBusy || quizSourceIds.length === 0}>
+                  {quizBusy && !quiz ? 'Generating…' : 'Generate quiz'}
+                </button>
+                <small>Select up to 12 processed materials. Answers stay hidden until submission.</small>
+              </div>
+            </aside>
+            <div className="quiz-panel" aria-live="polite">
+              {quizError && <p className="history-alert" role="alert">{quizError}</p>}
+              {quiz ? (
+                <>
+                  {quizResult && (
+                    <div className="quiz-score">
+                      <strong>{quizResult.score}/{quizResult.total}</strong>
+                      <span>{quizResult.score === quizResult.total ? 'Perfect score' : 'Quiz complete'}</span>
+                    </div>
+                  )}
+                  <div className="quiz-questions">
+                    {quiz.questions.map((question, questionIndex) => {
+                      const result = quizResult?.questions.find((item) => item.question_id === question.question_id)
+                      return (
+                        <article className="quiz-question" key={question.question_id}>
+                          <p className="quiz-number">QUESTION {questionIndex + 1}</p>
+                          <h3>{question.question}</h3>
+                          <div className="quiz-options">
+                            {question.options.map((option, optionIndex) => {
+                              const optionState = result
+                                ? optionIndex === result.correct_option_index ? 'correct'
+                                  : optionIndex === result.selected_option_index ? 'incorrect' : ''
+                                : ''
+                              return (
+                                <label className={`quiz-option ${optionState}`} key={`${question.question_id}-${optionIndex}`}>
+                                  <input
+                                    type="radio"
+                                    name={question.question_id}
+                                    checked={quizAnswers[question.question_id] === optionIndex}
+                                    onChange={() => setQuizAnswers((current) => ({ ...current, [question.question_id]: optionIndex }))}
+                                    disabled={Boolean(quizResult)}
+                                  />
+                                  <span>{option}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                          {result && (
+                            <div className={`quiz-explanation ${result.correct ? 'correct' : 'incorrect'}`}>
+                              <strong>{result.correct ? 'Correct' : 'Not quite'}</strong>
+                              <p>{result.explanation}</p>
+                              <small>Sources: {result.citations.map((citation, citationIndex) => {
+                                const sourceName = materials.find((material) => material.resource_id === citation.source_id)?.original_filename || 'Material'
+                                const location = citation.page ? ` · page ${citation.page}`
+                                  : citation.slide ? ` · slide ${citation.slide}`
+                                    : citation.image ? ` · image ${citation.image}`
+                                      : citation.start_seconds !== undefined
+                                        ? ` · ${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : ''
+                                return `${citationIndex ? '; ' : ''}${sourceName}${location}`
+                              }).join('')}</small>
+                            </div>
+                          )}
+                        </article>
+                      )
+                    })}
+                  </div>
+                  {!quizResult && (
+                    <button
+                      className="quiz-submit"
+                      type="button"
+                      onClick={() => void submitQuiz()}
+                      disabled={quizBusy || Object.keys(quizAnswers).length !== quiz.questions.length}
+                    >
+                      {quizBusy ? 'Scoring…' : `Submit ${Object.keys(quizAnswers).length}/${quiz.questions.length} answered`}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="chat-empty"><span aria-hidden="true">✓</span><h3>Build a grounded quiz</h3><p>Select ready materials and choose how many questions you want.</p></div>
+              )}
             </div>
           </div>
         </section>

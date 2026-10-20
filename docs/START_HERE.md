@@ -10,8 +10,8 @@ for Windows PowerShell and assume the repository is at `F:\LearnflowAI`.
 2. Set the console Region in the top-right corner to **US East (N. Virginia) —
    `us-east-1`**.
 3. Search for **Amazon Bedrock** and open the service console.
-4. Open **Model catalog**, search for **Gemma 3 12B IT**, and confirm that
-   `Google Gemma 3 12B IT` is available. Most models are enabled automatically. If
+4. Open **Model catalog**, search for **Gemma 4 31B**, and confirm that
+   `Google Gemma 4 31B` is available. Most models are enabled automatically. If
    the console shows an access action, complete it before continuing.
 5. In Bedrock's left navigation, open **API keys**.
 6. Open **Long-term API keys**, select **Generate long-term API key**, choose a
@@ -180,13 +180,25 @@ $body = @{
 
 Then run the same `Invoke-RestMethod` command above.
 
-## 8. Stop the project
+## 8. Generate and score a grounded quiz
+
+1. In the frontend, scroll to **Quiz**.
+2. Select one or more ready materials in **Quiz materials**.
+3. Choose 3, 5, 8, or 10 questions and select **Generate quiz**.
+4. Answer every question, then select **Submit**.
+5. Review the score, correct answers, explanations, and page, slide, image, or
+   timestamp citations.
+
+Generation makes one bounded Bedrock request. Correct answers remain on the
+server until submission, and scoring is local with no additional provider call.
+
+## 9. Stop the project
 
 Press `Ctrl+C` once in each of the three running PowerShell windows. This stops
 the processes but preserves uploaded resources, cached extraction, embeddings,
 and usage counters in local storage.
 
-## 9. Common problems
+## 10. Common problems
 
 - **Frontend says backend cannot be reached:** start Window 1 and confirm port
   8000 is not already occupied.
@@ -194,7 +206,7 @@ and usage counters in local storage.
 - **Bedrock reports disabled:** add the Bedrock values to `.env`, save it, and
   restart the API.
 - **Bedrock returns HTTP 503:** verify the API key has not expired, the Region is
-  `us-east-1`, Gemma 3 12B IT is available, and the local monthly limit is not reached.
+  `us-east-1`, Gemma 4 31B is available, and the local monthly limit is not reached.
 - **YouTube captions fail:** first confirm the video is public and shows a
   transcript on YouTube. Some hosting providers' IP addresses may be blocked.
 - **Jina returns HTTP 429:** the provider retries with bounded exponential backoff.

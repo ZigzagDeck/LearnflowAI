@@ -13,6 +13,8 @@ from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
 from .chat_integration import build_local_bedrock_chat_service
+from .quiz_api import router as quiz_router
+from .quiz_integration import build_local_bedrock_quiz_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
@@ -58,12 +60,14 @@ async def lifespan(application: FastAPI):
         application.state.chat_service = build_local_bedrock_chat_service(
             store
         )
+        application.state.quiz_service = build_local_bedrock_quiz_service(store)
     yield
 
 
 app = FastAPI(title="LearnFlow AI API", lifespan=lifespan)
 app.middleware("http")(request_logging_middleware)
 app.include_router(chat_router)
+app.include_router(quiz_router)
 
 app.add_middleware(
     CORSMiddleware,
