@@ -5,7 +5,7 @@ follow [docs/START_HERE.md](docs/START_HERE.md).
 
 For the complete project journey—including the starting point, failures,
 fixes, architecture decisions, current limits, and remaining production work—
-read [docs/FULL_ENGINEERING_JOURNEY.md](docs/FULL_ENGINEERING_JOURNEY.md).
+read [REPORT.md](REPORT.md).
 
 LearnFlow AI is a learning workspace being built in small milestones. The current milestone contains:
 
