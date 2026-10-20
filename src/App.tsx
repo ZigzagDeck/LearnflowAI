@@ -10,6 +10,13 @@ const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
 type UploadStatus = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
 type ExtractionStatus = 'idle' | 'queued' | 'processing' | 'success' | 'error'
 
+type OcrRuntime = {
+  provider: string
+  execution: 'google_cloud' | 'local'
+  local_engine_enabled: boolean
+  local_fallback_enabled: boolean
+}
+
 type ExtractedUnit = {
   reference_type: 'page' | 'slide' | 'image' | 'timestamp'
   reference_number: number
@@ -102,6 +109,10 @@ function App() {
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
+  const [ocrRuntime, setOcrRuntime] = useState<OcrRuntime | null>(null)
+  const ocrProviderLabel = ocrRuntime?.provider === 'google_document_ai'
+    ? 'Google Document AI'
+    : ocrRuntime?.provider === 'rapidocr' ? 'RapidOCR' : 'configured provider'
 
   const loadHistories = useCallback(async (silent = false) => {
     if (!silent) setHistoryBusy(true)
@@ -132,6 +143,21 @@ function App() {
     const timer = window.setTimeout(() => void loadHistories(), 0)
     return () => window.clearTimeout(timer)
   }, [loadHistories])
+
+  useEffect(() => {
+    let active = true
+    const loadOcrRuntime = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/usage/ocr`)
+        const payload = await response.json()
+        if (response.ok && active) setOcrRuntime(payload)
+      } catch {
+        // Processing errors still surface through the material status endpoint.
+      }
+    }
+    void loadOcrRuntime()
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (!materials.some((item) => item.status === 'uploaded' || item.status === 'processing')) return
@@ -221,7 +247,7 @@ function App() {
         setExtractionStatus(response.processing_job?.status === 'completed' ? 'queued' : (response.processing_job?.status || 'queued'))
         setMessage(response.deduplicated
           ? 'This material already exists. Its saved processing result will be reused.'
-          : 'Uploaded securely. Local text extraction and OCR have been queued automatically.')
+          : `Uploaded securely. Local text extraction and ${ocrProviderLabel} OCR have been queued automatically.`)
         void loadHistories()
       } else {
         let detail = 'The upload could not be completed. Please try again.'
@@ -257,9 +283,9 @@ function App() {
         : referenceType === 'timestamp' ? 'caption segments' : 'images'
     setExtractionMessage(referenceType === 'timestamp'
       ? `Indexed ${payload.content.length} timestamped caption segments.`
-      : `Processed ${payload.content.length} ${units} with text extraction and OCR.`)
+      : `Processed ${payload.content.length} ${units} with local text extraction and ${ocrProviderLabel} OCR.`)
     void loadHistories()
-  }, [loadHistories])
+  }, [loadHistories, ocrProviderLabel])
 
   const importYoutube = async () => {
     if (!youtubeUrl.trim() || status === 'uploading') return
@@ -309,13 +335,13 @@ function App() {
           await loadExtractedContent(uploadedResourceId)
         } else if (payload.status === 'failed' || job?.status === 'failed') {
           setExtractionStatus('error')
-          setExtractionMessage(job?.error || payload.error || 'Local processing failed. You can retry it.')
+          setExtractionMessage(job?.error || payload.error || 'Material processing failed. You can retry it.')
           void loadHistories()
         } else if (job?.status === 'processing') {
           setExtractionStatus('processing')
           setExtractionMessage(job.progress_total
-            ? `Extracting text and scanning visual content locally… ${job.progress_current} of ${job.progress_total}`
-            : activeYoutubeUrl ? 'Retrieving timestamped YouTube captions…' : 'Starting local text extraction and OCR…')
+            ? `Extracting native text locally and sending visual content to ${ocrProviderLabel}… ${job.progress_current} of ${job.progress_total}`
+            : activeYoutubeUrl ? 'Retrieving timestamped YouTube captions…' : `Starting local text extraction and ${ocrProviderLabel} OCR…`)
         } else {
           setExtractionStatus('queued')
           setExtractionMessage('Waiting for the local processing worker…')
@@ -336,13 +362,13 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl])
+  }, [uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
     setExtractionStatus('queued')
     setProcessingProgress(0)
-    setExtractionMessage('Re-queuing local text extraction and OCR…')
+    setExtractionMessage(`Re-queuing local text extraction and ${ocrProviderLabel} OCR…`)
     try {
       const response = await fetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
@@ -556,6 +582,11 @@ function App() {
               <p className="drop-hint">or drag and drop it here</p>
             </div>
             <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
+            {ocrRuntime && (
+              <p className="file-note">
+                OCR: {ocrProviderLabel} · {ocrRuntime.execution === 'google_cloud' ? 'Google Cloud' : 'Local'} · local fallback {ocrRuntime.local_fallback_enabled ? 'on' : 'off'}
+              </p>
+            )}
             <div className="source-divider"><span>or use a video link</span></div>
             <div className="youtube-row">
               <input
@@ -597,7 +628,7 @@ function App() {
                       disabled={extractionStatus !== 'error'}
                     >
                       {extractionStatus === 'queued' ? 'Queued for OCR'
-                        : extractionStatus === 'processing' ? `Processing locally · ${processingProgress}%`
+                        : extractionStatus === 'processing' ? `${ocrProviderLabel} OCR · ${processingProgress}%`
                           : extractionStatus === 'success' ? 'Text + OCR complete'
                             : 'Retry text + OCR'}
                     </button>

@@ -19,6 +19,7 @@ from .config import (
     GOOGLE_DOCUMENT_AI_MONTHLY_PAGE_LIMIT,
     GOOGLE_DOCUMENT_AI_PROCESSOR_ID,
     GOOGLE_SERVICE_ACCOUNT_JSON,
+    OCR_LOCAL_ENGINE_ENABLED,
     OCR_LOCAL_FALLBACK_ENABLED,
     OCR_PROVIDER,
 )
@@ -240,12 +241,16 @@ class FallbackOCRReader:
 @lru_cache(maxsize=1)
 def get_ocr_reader() -> OCRReader:
     if OCR_PROVIDER == "rapidocr":
+        if not OCR_LOCAL_ENGINE_ENABLED:
+            raise OCRUnavailableError(
+                "Local OCR is disabled. Configure Google Document AI instead."
+            )
         return RapidOCRReader()
     if OCR_PROVIDER != "google_document_ai":
         raise OCRUnavailableError(
             "LEARNFLOW_OCR_PROVIDER must be google_document_ai or rapidocr."
         )
     primary = GoogleDocumentAIOCRReader(ResourceStore(DATABASE_PATH))
-    if OCR_LOCAL_FALLBACK_ENABLED:
+    if OCR_LOCAL_ENGINE_ENABLED and OCR_LOCAL_FALLBACK_ENABLED:
         return FallbackOCRReader(primary, RapidOCRReader())
     return primary

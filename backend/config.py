@@ -78,6 +78,7 @@ YOUTUBE_TRANSCRIPT_LANGUAGES = tuple(
     if language.strip()
 )
 OCR_PROVIDER = os.getenv("LEARNFLOW_OCR_PROVIDER", "google_document_ai").strip()
+OCR_LOCAL_ENGINE_ENABLED = _environment_flag("LEARNFLOW_OCR_LOCAL_ENGINE_ENABLED")
 OCR_LOCAL_FALLBACK_ENABLED = _environment_flag(
     "LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED"
 )
@@ -95,7 +96,9 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv(
     "LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON", ""
 ).strip()
 EXTRACTION_PIPELINE_VERSION = (
-    f"native-{OCR_PROVIDER}-selective-v2+youtube-captions-v1"
+    f"native-{OCR_PROVIDER}-"
+    f"{'local-enabled' if OCR_LOCAL_ENGINE_ENABLED else 'cloud-only'}-"
+    "selective-v3+youtube-captions-v1"
 )
 CHUNKING_PIPELINE_VERSION = "semantic-boundary-v1"
 _embedding_version_name = (

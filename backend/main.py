@@ -27,6 +27,8 @@ from .config import (
     MAX_UPLOAD_SIZE_BYTES,
     MAX_UPLOAD_SIZE_MB,
     OCR_PROVIDER,
+    OCR_LOCAL_ENGINE_ENABLED,
+    OCR_LOCAL_FALLBACK_ENABLED,
     PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
     JINA_EMBEDDING_DIMENSIONS,
@@ -155,6 +157,13 @@ def ocr_usage() -> dict[str, object]:
         ) from error
     return {
         "provider": OCR_PROVIDER,
+        "execution": (
+            "google_cloud" if OCR_PROVIDER == "google_document_ai" else "local"
+        ),
+        "local_engine_enabled": OCR_LOCAL_ENGINE_ENABLED,
+        "local_fallback_enabled": (
+            OCR_LOCAL_ENGINE_ENABLED and OCR_LOCAL_FALLBACK_ENABLED
+        ),
         "period": period,
         "used_pages": used_pages,
         "monthly_page_limit": (

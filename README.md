@@ -26,7 +26,7 @@ YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Ama
 - `backend/ocr.py` - Inline Google Document AI OCR, local usage cap, and opt-in RapidOCR fallback.
 - `backend/resource_store.py` - SQLite metadata, cache, chunks, FTS, and compact dense vectors.
 - `backend/processing.py` - One-job-at-a-time extraction coordinator with durable progress and safe failures.
-- `backend/worker.py` - Local queue worker; it is the only process that loads the OCR model.
+- `backend/worker.py` - Local queue worker that renders bounded inputs and sends OCR requests to the configured provider.
 - `backend/chunking.py` - Dependency-free text normalization and bounded, overlapping citation chunks.
 - `backend/embeddings.py` - Guarded Jina REST adapter and opt-in local FastEmbed fallback.
 - `backend/retrieval.py` - Citation-valid lexical and hybrid retrievers for grounded chat.
@@ -80,12 +80,13 @@ $env:GOOGLE_DOCUMENT_AI_LOCATION="us"
 $env:GOOGLE_DOCUMENT_AI_PROCESSOR_ID="your-processor-id"
 $env:GOOGLE_APPLICATION_CREDENTIALS="C:\secure\path\document-ai-key.json"
 $env:LEARNFLOW_GOOGLE_OCR_MONTHLY_PAGE_LIMIT="1000"
+$env:LEARNFLOW_OCR_LOCAL_ENGINE_ENABLED="false"
 $env:LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED="false"
 ```
 
 Use the exact location shown on the processor; the location is part of its identity and API endpoint. For hosted deployment, set the same non-secret values in the host settings and store the complete service-account JSON in the secret `LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON` instead of committing a file.
 
-The local SQLite counter reserves one page before every request and blocks requests beyond 1,000 pages in a calendar month by default. Inspect it at `GET /usage/ocr`. Keep a Google billing budget alert as a second guard because deleting the local database resets the local counter. RapidOCR remains available only when `LEARNFLOW_OCR_PROVIDER=rapidocr` or `LEARNFLOW_OCR_LOCAL_FALLBACK_ENABLED=true` is explicitly configured.
+The local SQLite counter reserves one page before every request and blocks requests beyond 1,000 pages in a calendar month by default. Inspect it at `GET /usage/ocr`; the response also reports the execution location and whether the local engine or fallback is active. Keep a Google billing budget alert as a second guard because deleting the local database resets the local counter. RapidOCR cannot run unless `LEARNFLOW_OCR_LOCAL_ENGINE_ENABLED=true` is explicitly configured. The default is fail-closed Google-only OCR.
 
 ## Configure Jina embeddings
 
