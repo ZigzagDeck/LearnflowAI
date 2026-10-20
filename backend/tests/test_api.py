@@ -11,6 +11,7 @@ from pptx import Presentation
 
 import backend.main as backend_main
 from backend.processing import process_next_job
+from backend.tests.fake_embeddings import TinyEmbeddingProvider
 
 
 class EmptyOCR:
@@ -52,6 +53,7 @@ def run_worker_once(ocr=None):
         backend_main.get_resource_store(),
         backend_main.UPLOAD_DIR,
         ocr_factory=lambda: ocr or EmptyOCR(),
+        embedding_factory=TinyEmbeddingProvider,
     )
 
 

@@ -10,6 +10,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Automatic UI polling, per-page/slide progress, failure details, and explicit retry
 - Deterministic semantic-boundary chunks that preserve exact page/slide/image citations
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
+- Memory-guarded local ONNX embeddings and SQLite lexical/dense rank fusion
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
 End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
@@ -20,11 +21,12 @@ End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are *
 - `backend/` - The Python API. `main.py` defines the FastAPI application, CORS settings, validation, upload, and extraction endpoints.
 - `backend/extraction.py` - PyMuPDF and python-pptx extraction with OCR enrichment and page/slide/image provenance.
 - `backend/ocr.py` - Lazy local RapidOCR adapter backed by ONNX Runtime.
-- `backend/resource_store.py` - SQLite metadata, status, SHA-256 deduplication, and versioned extraction cache.
+- `backend/resource_store.py` - SQLite metadata, cache, chunks, FTS, and compact dense vectors.
 - `backend/processing.py` - One-job-at-a-time extraction coordinator with durable progress and safe failures.
 - `backend/worker.py` - Local queue worker; it is the only process that loads the OCR model.
 - `backend/chunking.py` - Dependency-free text normalization and bounded, overlapping citation chunks.
-- `backend/retrieval.py` - Citation-valid local lexical retriever for the grounded chat boundary.
+- `backend/embeddings.py` - Lazy, CPU-only FastEmbed adapter with a free-memory safety check.
+- `backend/retrieval.py` - Citation-valid lexical and hybrid retrievers for grounded chat.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
 - `package.json` - Frontend commands and JavaScript dependencies.
@@ -37,7 +39,9 @@ Exact duplicate uploads reuse the existing resource and stored file. Extraction 
 
 The worker also converts each page, slide, or image record into normalized chunks of at most 1,200 characters with a small overlap. A chunk never crosses a citation boundary. Chunk IDs are deterministic, and the extraction plus its chunks are committed atomically to SQLite. Existing cached extraction can be backfilled into the current chunk format without loading OCR again.
 
-SQLite FTS5 indexes the normalized text in the same transaction as chunk persistence. Searches use local BM25 ranking and require an explicit resource ID allow-list in the SQL query, preventing results from an unrelated resource from entering the retrieval boundary. The lexical adapter already returns the strict `RetrievalHit`/`Citation` contracts; chat remains fail-closed until resource ownership and the final hybrid retriever are connected.
+SQLite FTS5 and normalized `float32` embeddings are written in the same transaction as each resource's chunks. Searches apply the resource allow-list inside both lexical and dense SQL queries. The hybrid adapter combines BM25 and semantic ranks with reciprocal-rank fusion and returns strict `RetrievalHit`/`Citation` contracts. Dense search is an exact, streaming SQLite scan, which avoids a vector service or a resident FAISS index for the current hackathon-scale corpus. Chat remains fail-closed until resource ownership is connected.
+
+The embedding model is lazy: tests use four-dimensional deterministic fakes and never download or load it. On first real worker use, FastEmbed downloads `BAAI/bge-small-en-v1.5` into `backend/data/models` unless `LEARNFLOW_MODEL_CACHE_DIR` is changed. Runtime defaults are intentionally conservative: CPU only, one thread, batches of four, no ONNX CPU memory arena, and a refusal to initialize below 768 MB of currently free physical memory. These values can be adjusted with the `LEARNFLOW_EMBEDDING_*` and `LEARNFLOW_MIN_EMBEDDING_FREE_MB` settings in `.env.example`; increasing them can increase RAM usage.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. OCR runs outside web requests in a dedicated local worker. SQLite claiming guarantees that only one heavy job runs at once, even if another worker is started. Jobs retain progress and failures across restarts; work with no update for 15 minutes is treated as interrupted and re-queued. Change that window with `LEARNFLOW_JOB_STALE_SECONDS`.
 
@@ -92,7 +96,7 @@ cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
 .\.venv\Scripts\python.exe -m backend.worker
 ```
 
-Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. It does not use AWS.
+Keep the worker running while uploading material. It polls the local SQLite queue and processes one PDF, presentation, or image at a time. OCR and embedding are local; it does not use AWS. The API process does not load either model.
 
 ## Test the health endpoint
 

@@ -7,6 +7,7 @@ from PIL import Image
 from fastapi.testclient import TestClient
 import backend.main as api
 from backend.processing import process_next_job
+from backend.tests.fake_embeddings import TinyEmbeddingProvider
 
 
 class EmptyOCR:
@@ -29,6 +30,7 @@ def run_worker_once(directory, ocr=None):
         api.get_resource_store(),
         directory,
         ocr_factory=lambda: ocr or EmptyOCR(),
+        embedding_factory=TinyEmbeddingProvider,
     )
 
 

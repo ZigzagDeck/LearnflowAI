@@ -18,12 +18,12 @@ AWS constraint: Amazon Bedrock only. Storage, OCR, transcription, retrieval, job
 | Image ingestion | Safe PNG/JPEG validation and OCR with image reference | `backend/image_utils.py`, `backend/file_validation.py`, `backend/extraction.py` | Upload/extract API tests pass | Visual-semantic descriptions and broader image formats only if justified |
 | OCR | RapidOCR PP-OCR models through ONNX Runtime; lazy local loading in one worker | `backend/ocr.py`, `backend/worker.py` | Real local inference recognized text and numbers; queue serializes heavy jobs | OCR quality evaluation set and language selection |
 | Video | Contracts contain timestamp citation fields | `backend/contracts.py`, `backend/chat_service.py` | Contract tests pass | Upload, FFmpeg audio extraction, transcription, segment persistence, UI |
-| RAG | Strict retrieval-hit/citation contracts, deterministic citation chunks, and allow-list-filtered SQLite FTS5/BM25 retrieval | `backend/contracts.py`, `backend/chunking.py`, `backend/retrieval.py`, `backend/chat_service.py` | Chunk, provenance, FTS filtering, citation-adapter, persistence, and service tests pass | Dense index/fusion, ownership/authorization adapter, evaluation set |
+| RAG | Strict retrieval-hit/citation contracts, deterministic citation chunks, allow-list-filtered SQLite FTS5/BM25, compact local embeddings, and reciprocal-rank fusion | `backend/contracts.py`, `backend/chunking.py`, `backend/embeddings.py`, `backend/retrieval.py`, `backend/chat_service.py` | Chunk, provenance, lexical/dense filtering, hybrid citation-adapter, persistence, and service tests pass | Ownership/authorization adapter and evaluation set |
 | Chat API | `/chat` router is now registered and fails closed when integrations are absent | `backend/chat_api.py`, `backend/main.py` | API tests pass | Real authorizer, retriever, Bedrock provider, frontend |
 | Model provider | Generic OpenAI-compatible adapter exists | `backend/llm_provider.py` | Mock tests pass | Replace/wrap with a Bedrock Runtime Converse provider; no live AWS test yet |
 | Quiz | Strict request/question/response models | `backend/contracts.py` | Validation tests pass | Retrieval-backed service, API, scoring boundary, frontend |
 | Persistence | Local files plus SQLite resource metadata, status, hashes, versioned extraction cache, durable jobs, and normalized chunks | `backend/uploads/`, `backend/resource_store.py` | Persistence, deduplication, cache, chunks, jobs, progress, retry, and recovery tests pass | Ownership and cleanup policy |
-| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 76 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
+| Tests/CI | Backend pytest, frontend lint/build, Docker smoke workflow | `backend/tests/`, `.github/workflows/ci.yml` | 80 backend tests pass locally; frontend lint/build pass | OCR fixtures with real-world samples, retrieval evaluation, Docker build rerun |
 
 ## Current data flow and diagnosis
 
@@ -44,21 +44,21 @@ OCR now prevents image text from being silently skipped, but OCR alone cannot in
 | Metadata/cache | SQLite + content-addressed local files | Mandatory next | Durable, cheap, simple, supports hashes/status/jobs without a managed database |
 | Background processing | Dedicated local Python worker over a SQLite job table | Mandatory before large resources | Restart-safe processing without Redis or a cloud queue; keep web requests short |
 | Chunking | Small in-repository semantic-boundary chunker | Mandatory | Paragraph/heading/slide/transcript-aware behavior without a framework dependency |
-| Embeddings | sentence-transformers with `BAAI/bge-small-en-v1.5` | Mandatory for RAG | Compact local asymmetric retrieval model; evaluate before changing models |
-| Dense retrieval | FAISS `IndexFlatIP` with normalized embeddings | Mandatory for RAG | Exact local search is enough for hackathon-scale corpora and keeps operations simple |
+| Embeddings | FastEmbed/ONNX with `BAAI/bge-small-en-v1.5` | Mandatory/current | Local asymmetric embeddings without loading PyTorch; lazy, CPU-only, one-thread execution with a memory guard |
+| Dense retrieval | Normalized float32 vectors in SQLite with bounded exact cosine scan | Mandatory/current | Avoids another compiled index and resident copy while the hackathon corpus is small |
 | Lexical retrieval | SQLite FTS5/BM25 | Mandatory for hybrid RAG | No extra service; strong exact-term search beside semantic retrieval |
 | Reranking | None initially | Optional | Add a local cross-encoder only if the evaluation set shows a useful gain |
 | LLM/quiz generation | Bedrock Runtime Converse via `boto3`, validated with Pydantic | Mandatory later | One AWS integration, one request interface, structured grounded outputs |
 | Storage/AWS services | Local disk + SQLite; Bedrock only | Mandatory constraint | Do not add S3, Transcribe, Textract, DynamoDB, Lambda, OpenSearch, or CloudWatch |
 
-For small corpora, Sentence Transformers documents direct semantic search as practical, while FAISS provides exact inner-product indexes for normalized vectors. Bedrock Converse accepts raw image bytes for supported multimodal models, so S3 is not required for diagram analysis.
+For small corpora, Sentence Transformers documents direct semantic search as practical, so the current SQLite scan avoids a second index dependency. Bedrock Converse accepts raw image bytes for supported multimodal models, so S3 is not required for diagram analysis.
 
 ## Prioritized roadmap
 
 1. **Reliable multimodal document ingestion (first slice complete).** PDF native+OCR, PPTX image OCR, standalone images, provenance, aligned UI formats, and passing tests.
 2. **Durable resource registry and cache (complete).** SHA-256 deduplication, SQLite resource/status records, versioned extraction JSON, listing/status APIs, and restart-safe tests are implemented.
 3. **Local background worker (complete).** Upload returns after durable enqueue, the UI polls unit progress, a SQLite claim permits one heavy job, failures are explicitly retryable, and stale interrupted work resumes.
-4. **Normalized chunks and hybrid index (in progress).** Citation-preserving chunks, atomic SQLite persistence, and filtered FTS5/BM25 retrieval are complete. Remaining: compact local dense indexing, lexical/dense fusion, and a retrieval evaluation set.
+4. **Normalized chunks and hybrid index (core complete).** Citation-preserving chunks, atomic lexical/vector persistence, filtered BM25 and exact cosine retrieval, and reciprocal-rank fusion are complete. Remaining: a representative retrieval evaluation set and tuning from its results.
 5. **Bedrock text and vision integration.** Complete when one configured model answers only from retrieved evidence, selected visual pages get clearly marked model-derived descriptions, usage is logged without content/secrets, and spend limits are documented.
 6. **Grounded chat UI.** Complete when users select resources, receive insufficient-evidence responses, and open exact citations.
 7. **Local video and authorized YouTube ingestion.** Complete when supported uploads produce real timestamped faster-whisper segments, YouTube links support embedded playback plus authorized captions/transcripts, and citations seek to exact timestamps. Arbitrary YouTube audiovisual downloading is not a dependable core path.
@@ -75,5 +75,5 @@ The first slice adds two runtime dependencies (`rapidocr`, `onnxruntime`), keeps
 - [PyMuPDF OCR guidance](https://pymupdf.readthedocs.io/en/latest/recipes-ocr.html)
 - [faster-whisper repository](https://github.com/SYSTRAN/faster-whisper)
 - [Sentence Transformers semantic-search documentation](https://www.sbert.net/examples/sentence_transformer/applications/semantic-search/README.html)
-- [FAISS project documentation](https://github.com/facebookresearch/faiss)
+- [FastEmbed documentation](https://qdrant.github.io/fastembed/Getting%20Started/)
 - [Amazon Bedrock Runtime Converse API](https://docs.aws.amazon.com/boto3/latest/reference/services/bedrock-runtime/client/converse.html)

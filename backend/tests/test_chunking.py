@@ -6,6 +6,7 @@ from backend.chunking import build_chunks, split_text
 from backend.config import PROCESSING_PIPELINE_VERSION
 from backend.processing import process_next_job
 from backend.resource_store import ResourceStore
+from backend.tests.fake_embeddings import TinyEmbeddingProvider
 
 
 RESOURCE_ID = "a" * 32
@@ -117,9 +118,20 @@ def test_cached_extraction_is_backfilled_without_repeating_ocr(tmp_path):
     def unexpected_ocr():
         raise AssertionError("Cached extraction must not reload OCR")
 
-    result = process_next_job(store, tmp_path, ocr_factory=unexpected_ocr)
+    result = process_next_job(
+        store,
+        tmp_path,
+        ocr_factory=unexpected_ocr,
+        embedding_factory=TinyEmbeddingProvider,
+    )
 
     assert result is not None
     assert result.status == "completed"
     assert store.list_chunks(resource.resource_id, CHUNK_VERSION)[0].reference_number == 1
+    assert store.search_embeddings(
+        TinyEmbeddingProvider().embed_query("text"),
+        [resource.resource_id],
+        CHUNK_VERSION,
+        TinyEmbeddingProvider.model_name,
+    )
 

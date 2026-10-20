@@ -1,10 +1,13 @@
-"""SQLite-backed material metadata and extraction cache."""
+"""SQLite-backed material metadata, extraction cache, and local indexes."""
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
+import math
 import json
 from pathlib import Path
 import re
 import sqlite3
+import struct
 import uuid
 
 from .chunking import NormalizedChunk
@@ -176,6 +179,23 @@ class ResourceStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunks_resource_reference "
                 "ON chunks(resource_id, reference_type, reference_number, chunk_index)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                    chunk_id TEXT PRIMARY KEY,
+                    model_name TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL CHECK (dimensions > 0),
+                    vector BLOB NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(chunk_id) REFERENCES chunks(chunk_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model "
+                "ON chunk_embeddings(model_name)"
             )
             connection.execute(
                 """
@@ -454,6 +474,55 @@ class ResourceStore:
             ],
         )
 
+    @staticmethod
+    def _validate_embeddings(
+        chunks: list[NormalizedChunk],
+        embedding_model: str | None,
+        embeddings: Mapping[str, Sequence[float]] | None,
+    ) -> int | None:
+        if embedding_model is None and embeddings is None:
+            return None
+        if not embedding_model or embeddings is None:
+            raise ValueError("Embedding model and vectors must be provided together.")
+        expected_ids = {chunk.chunk_id for chunk in chunks}
+        if set(embeddings) != expected_ids:
+            raise ValueError("Every normalized chunk must have exactly one embedding.")
+        dimensions = {len(vector) for vector in embeddings.values()}
+        if len(dimensions) != 1 or next(iter(dimensions), 0) < 1:
+            raise ValueError("Chunk embeddings must have one non-zero dimension.")
+        if any(
+            not all(math.isfinite(float(value)) for value in vector)
+            for vector in embeddings.values()
+        ):
+            raise ValueError("Chunk embeddings must contain only finite values.")
+        return next(iter(dimensions))
+
+    @staticmethod
+    def _insert_embeddings(
+        connection: sqlite3.Connection,
+        embedding_model: str,
+        embeddings: Mapping[str, Sequence[float]],
+        dimensions: int,
+        created_at: str,
+    ) -> None:
+        connection.executemany(
+            """
+            INSERT INTO chunk_embeddings (
+                chunk_id, model_name, dimensions, vector, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    chunk_id,
+                    embedding_model,
+                    dimensions,
+                    struct.pack(f"<{dimensions}f", *vector),
+                    created_at,
+                )
+                for chunk_id, vector in embeddings.items()
+            ],
+        )
+
     def save_processed_content(
         self,
         resource_id: str,
@@ -461,9 +530,13 @@ class ResourceStore:
         extraction_version: str,
         chunks: list[NormalizedChunk],
         chunk_version: str,
+        *,
+        embedding_model: str | None = None,
+        embeddings: Mapping[str, Sequence[float]] | None = None,
     ) -> None:
-        """Atomically persist extraction, normalized chunks, and ready status."""
+        """Atomically persist extraction, chunks, optional vectors, and ready status."""
         self._validate_chunks(resource_id, chunks, chunk_version)
+        dimensions = self._validate_embeddings(chunks, embedding_model, embeddings)
         now = datetime.now(UTC).isoformat()
         serialized = json.dumps(content, ensure_ascii=False, separators=(",", ":"))
         try:
@@ -476,6 +549,14 @@ class ResourceStore:
                     "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
                 )
                 self._insert_chunks(connection, chunks, now)
+                if dimensions is not None and embedding_model and embeddings:
+                    self._insert_embeddings(
+                        connection,
+                        embedding_model,
+                        embeddings,
+                        dimensions,
+                        now,
+                    )
                 cursor = connection.execute(
                     """
                     UPDATE resources
@@ -495,9 +576,13 @@ class ResourceStore:
         resource_id: str,
         chunks: list[NormalizedChunk],
         chunk_version: str,
+        *,
+        embedding_model: str | None = None,
+        embeddings: Mapping[str, Sequence[float]] | None = None,
     ) -> None:
-        """Backfill or rebuild chunks without repeating cached OCR."""
+        """Backfill or rebuild chunks and vectors without repeating cached OCR."""
         self._validate_chunks(resource_id, chunks, chunk_version)
+        dimensions = self._validate_embeddings(chunks, embedding_model, embeddings)
         now = datetime.now(UTC).isoformat()
         try:
             with self._connect() as connection:
@@ -514,6 +599,14 @@ class ResourceStore:
                     "DELETE FROM chunks WHERE resource_id = ?", (resource_id,)
                 )
                 self._insert_chunks(connection, chunks, now)
+                if dimensions is not None and embedding_model and embeddings:
+                    self._insert_embeddings(
+                        connection,
+                        embedding_model,
+                        embeddings,
+                        dimensions,
+                        now,
+                    )
                 connection.execute(
                     """
                     UPDATE resources
@@ -601,6 +694,58 @@ class ResourceStore:
             ]
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not search normalized chunks.") from exc
+
+    def search_embeddings(
+        self,
+        query_vector: Sequence[float],
+        allowed_resource_ids: list[str],
+        chunk_version: str,
+        embedding_model: str,
+        *,
+        limit: int = 8,
+    ) -> list[ChunkSearchHit]:
+        """Run bounded exact cosine search within an explicit source allow-list."""
+        allowed_ids = list(dict.fromkeys(allowed_resource_ids))[:30]
+        vector = [float(value) for value in query_vector]
+        if not allowed_ids or limit < 1 or limit > 50 or not vector:
+            return []
+        if not all(math.isfinite(value) for value in vector):
+            raise ValueError("Query embeddings must contain only finite values.")
+        placeholders = ",".join("?" for _ in allowed_ids)
+        candidates: list[ChunkSearchHit] = []
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    f"""
+                    SELECT chunks.*, chunk_embeddings.dimensions,
+                        chunk_embeddings.vector
+                    FROM chunk_embeddings
+                    JOIN chunks ON chunks.chunk_id = chunk_embeddings.chunk_id
+                    WHERE chunk_embeddings.model_name = ?
+                        AND chunks.chunk_version = ?
+                        AND chunks.resource_id IN ({placeholders})
+                    """,
+                    [embedding_model, chunk_version, *allowed_ids],
+                )
+                for row in rows:
+                    dimensions = int(row["dimensions"])
+                    if dimensions != len(vector):
+                        continue
+                    stored = struct.unpack(f"<{dimensions}f", row["vector"])
+                    cosine = sum(left * right for left, right in zip(vector, stored))
+                    score = max(0.0, min(1.0, (cosine + 1.0) / 2.0))
+                    candidates.append(
+                        ChunkSearchHit(chunk=self._chunk(row), score=score)
+                    )
+                    if len(candidates) > limit:
+                        candidates.sort(
+                            key=lambda hit: (-hit.score, hit.chunk.chunk_id)
+                        )
+                        del candidates[limit:]
+            candidates.sort(key=lambda hit: (-hit.score, hit.chunk.chunk_id))
+            return candidates
+        except (sqlite3.Error, struct.error) as exc:
+            raise ResourceStoreError("Could not search semantic chunk vectors.") from exc
 
     def cached_extraction(
         self, resource_id: str, extraction_version: str

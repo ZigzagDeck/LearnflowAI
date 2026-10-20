@@ -4,7 +4,23 @@ from dataclasses import dataclass
 
 from .config import CHUNKING_PIPELINE_VERSION
 from .contracts import Citation, RetrievalHit, SourceType
-from .resource_store import ResourceStore
+from .embeddings import EmbeddingProvider, EmbeddingUnavailableError
+from .resource_store import ChunkSearchHit, ResourceStore
+
+
+def _to_retrieval_hit(match: ChunkSearchHit, score: float | None = None) -> RetrievalHit:
+    chunk = match.chunk
+    provenance = {chunk.reference_type: chunk.reference_number}
+    return RetrievalHit(
+        citation=Citation(
+            source_id=chunk.resource_id,
+            source_type=SourceType(chunk.source_type),
+            chunk_id=chunk.chunk_id,
+            **provenance,
+        ),
+        text=chunk.text,
+        score=match.score if score is None else score,
+    )
 
 
 @dataclass(frozen=True)
@@ -26,24 +42,73 @@ class SQLiteLexicalRetriever:
             chunk = match.chunk
             if chunk.source_type == SourceType.VIDEO.value:
                 continue
-            provenance = {chunk.reference_type: chunk.reference_number}
-            hits.append(
-                RetrievalHit(
-                    citation=Citation(
-                        source_id=chunk.resource_id,
-                        source_type=SourceType(chunk.source_type),
-                        chunk_id=chunk.chunk_id,
-                        **provenance,
-                    ),
-                    text=chunk.text,
-                    score=match.score,
-                )
-            )
+            hits.append(_to_retrieval_hit(match))
         return hits
 
     async def retrieve_video(
         self, question: str, video_source_id: str, playback_seconds: float
     ) -> list[RetrievalHit]:
         # Timestamped transcript chunks arrive in the dedicated video milestone.
+        return []
+
+
+@dataclass(frozen=True)
+class SQLiteHybridRetriever:
+    """Fuse lexical and dense ranks without loading a vector database."""
+
+    store: ResourceStore
+    embedder: EmbeddingProvider
+    limit: int = 8
+    fusion_constant: int = 60
+
+    async def retrieve_documents(
+        self, question: str, allowed_source_ids: list[str]
+    ) -> list[RetrievalHit]:
+        candidate_limit = min(50, max(16, self.limit * 3))
+        lexical = self.store.search_chunks(
+            question,
+            allowed_source_ids,
+            CHUNKING_PIPELINE_VERSION,
+            limit=candidate_limit,
+        )
+        try:
+            query_vector = self.embedder.embed_query(question)
+            dense = self.store.search_embeddings(
+                query_vector,
+                allowed_source_ids,
+                CHUNKING_PIPELINE_VERSION,
+                self.embedder.model_name,
+                limit=candidate_limit,
+            )
+        except EmbeddingUnavailableError:
+            dense = []
+
+        matches: dict[str, ChunkSearchHit] = {}
+        fused_scores: dict[str, float] = {}
+        for ranked_results in (lexical, dense):
+            for rank, match in enumerate(ranked_results, start=1):
+                chunk_id = match.chunk.chunk_id
+                matches[chunk_id] = match
+                fused_scores[chunk_id] = fused_scores.get(chunk_id, 0.0) + (
+                    1.0 / (self.fusion_constant + rank)
+                )
+
+        ranked_ids = sorted(
+            fused_scores,
+            key=lambda chunk_id: (-fused_scores[chunk_id], chunk_id),
+        )
+        hits: list[RetrievalHit] = []
+        for chunk_id in ranked_ids:
+            match = matches[chunk_id]
+            if match.chunk.source_type == SourceType.VIDEO.value:
+                continue
+            hits.append(_to_retrieval_hit(match, fused_scores[chunk_id]))
+            if len(hits) == self.limit:
+                break
+        return hits
+
+    async def retrieve_video(
+        self, question: str, video_source_id: str, playback_seconds: float
+    ) -> list[RetrievalHit]:
         return []
 

@@ -5,6 +5,11 @@ from pathlib import Path
 
 from .chunking import build_chunks
 from .config import CHUNKING_PIPELINE_VERSION, EXTRACTION_PIPELINE_VERSION
+from .embeddings import (
+    EmbeddingProvider,
+    EmbeddingUnavailableError,
+    get_embedding_provider,
+)
 from .extraction import extract_image, extract_pdf, extract_pptx
 from .ocr import OCRReader, OCRUnavailableError, get_ocr_reader
 from .resource_store import ProcessingJob, ResourceStore, ResourceStoreError
@@ -18,6 +23,7 @@ def process_next_job(
     upload_dir: Path,
     *,
     ocr_factory: Callable[[], OCRReader] = get_ocr_reader,
+    embedding_factory: Callable[[], EmbeddingProvider] = get_embedding_provider,
 ) -> ProcessingJob | None:
     """Claim and complete at most one queued job in the calling process."""
     job = store.claim_next_extraction()
@@ -66,9 +72,22 @@ def process_next_job(
             content,
             CHUNKING_PIPELINE_VERSION,
         )
+        embedder = embedding_factory()
+        vectors = embedder.embed_documents([chunk.text for chunk in chunks])
+        if len(vectors) != len(chunks):
+            raise EmbeddingUnavailableError(
+                "The local embedding model returned an incomplete index."
+            )
+        embeddings = {
+            chunk.chunk_id: vector for chunk, vector in zip(chunks, vectors)
+        }
         if cached_content is not None:
             store.replace_chunks(
-                resource.resource_id, chunks, CHUNKING_PIPELINE_VERSION
+                resource.resource_id,
+                chunks,
+                CHUNKING_PIPELINE_VERSION,
+                embedding_model=embedder.model_name,
+                embeddings=embeddings,
             )
         else:
             store.save_processed_content(
@@ -77,6 +96,8 @@ def process_next_job(
                 EXTRACTION_PIPELINE_VERSION,
                 chunks,
                 CHUNKING_PIPELINE_VERSION,
+                embedding_model=embedder.model_name,
+                embeddings=embeddings,
             )
         store.complete_job(job.job_id)
     except OCRUnavailableError:
@@ -85,6 +106,8 @@ def process_next_job(
             job.resource_id,
             "Local OCR is unavailable. Install the backend OCR dependencies and retry.",
         )
+    except EmbeddingUnavailableError as error:
+        store.fail_job(job.job_id, job.resource_id, str(error))
     except (OSError, ValueError) as error:
         store.fail_job(job.job_id, job.resource_id, str(error))
     except ResourceStoreError:
