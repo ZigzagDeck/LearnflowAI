@@ -1,5 +1,8 @@
 # LearnFlow AI
 
+For a repeatable one-time setup, daily startup sequence, and end-to-end test,
+follow [docs/START_HERE.md](docs/START_HERE.md).
+
 LearnFlow AI is a learning workspace being built in small milestones. The current milestone contains:
 
 - A React + TypeScript + Vite frontend
