@@ -88,6 +88,8 @@ The local SQLite counter reserves one page before every request and blocks reque
 
 Create a Voyage project/API key and store it only in an environment secret. Do not commit it or place it in `.env.example`.
 
+For local development, copy `.env.example` to `.env` in the project root and fill in the values for both Google Document AI and Voyage. The backend loads this file automatically. Existing process or hosting environment variables take priority over `.env`, and `.env` is ignored by Git.
+
 ```powershell
 $env:LEARNFLOW_EMBEDDING_PROVIDER="voyage"
 $env:VOYAGE_API_KEY="your-rotated-secret-key"

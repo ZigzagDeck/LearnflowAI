@@ -3,6 +3,12 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+
+BACKEND_DIR = Path(__file__).parent
+load_dotenv(BACKEND_DIR.parent / ".env", override=False)
+
 
 def _environment_flag(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -10,8 +16,6 @@ def _environment_flag(name: str, default: bool = False) -> bool:
         return default
     return value.strip().casefold() in {"1", "true", "yes", "on"}
 
-
-BACKEND_DIR = Path(__file__).parent
 UPLOAD_DIR = Path(
     os.getenv("LEARNFLOW_UPLOAD_DIR", str(BACKEND_DIR / "uploads"))
 )
