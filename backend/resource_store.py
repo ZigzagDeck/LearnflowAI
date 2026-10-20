@@ -20,6 +20,10 @@ class ResourceStoreError(RuntimeError):
     """A safe boundary for local metadata persistence failures."""
 
 
+class ResourceProcessingError(ResourceStoreError):
+    """A resource cannot be deleted while its worker is processing it."""
+
+
 class MonthlyUsageLimitError(ResourceStoreError):
     """A locally enforced monthly external-service limit was reached."""
 
@@ -173,6 +177,39 @@ class ResourceStore:
                     PRIMARY KEY(provider, period)
                 )
                 """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    source_ids_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at "
+                "ON chat_sessions(updated_at DESC)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    message_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content TEXT NOT NULL,
+                    citations_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES chat_sessions(session_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created "
+                "ON chat_messages(session_id, created_at)"
             )
             connection.execute(
                 """
@@ -386,17 +423,152 @@ class ResourceStore:
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not create resource metadata.") from exc
 
-    def delete(self, resource_id: str) -> None:
+    def delete(self, resource_id: str, *, reject_processing: bool = False) -> bool:
         try:
             with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT status FROM resources WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+                if row is None:
+                    return False
+                if reject_processing and row["status"] == "processing":
+                    raise ResourceProcessingError(
+                        "This material is processing. Wait for it to finish before deleting it."
+                    )
                 connection.execute(
                     "DELETE FROM chunks_fts WHERE resource_id = ?", (resource_id,)
                 )
                 connection.execute(
                     "DELETE FROM resources WHERE resource_id = ?", (resource_id,)
                 )
+            return True
+        except ResourceProcessingError:
+            raise
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not remove stale resource metadata.") from exc
+
+    def append_chat_turn(
+        self,
+        session_id: str,
+        question: str,
+        answer: str,
+        source_ids: Sequence[str],
+        citations: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Persist one completed learner question and its grounded answer."""
+        now = datetime.now(UTC).isoformat()
+        title = question.strip().replace("\n", " ")[:120] or "Learning chat"
+        normalized_sources = list(dict.fromkeys(source_ids))
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO chat_sessions (
+                        session_id, title, source_ids_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        source_ids_json = excluded.source_ids_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (session_id, title, json.dumps(normalized_sources), now, now),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO chat_messages (
+                        message_id, session_id, role, content, citations_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (uuid.uuid4().hex, session_id, "user", question, "[]", now),
+                        (
+                            uuid.uuid4().hex,
+                            session_id,
+                            "assistant",
+                            answer,
+                            json.dumps(list(citations)),
+                            now,
+                        ),
+                    ],
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not save chat history.") from exc
+
+    def list_chat_sessions(self) -> list[dict[str, object]]:
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT sessions.*,
+                        (SELECT COUNT(*) FROM chat_messages
+                         WHERE chat_messages.session_id = sessions.session_id) AS message_count
+                    FROM chat_sessions AS sessions
+                    ORDER BY updated_at DESC
+                    LIMIT 100
+                    """
+                ).fetchall()
+            return [
+                {
+                    "session_id": row["session_id"],
+                    "title": row["title"],
+                    "source_ids": json.loads(row["source_ids_json"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "message_count": row["message_count"],
+                }
+                for row in rows
+            ]
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise ResourceStoreError("Could not list chat history.") from exc
+
+    def get_chat_session(self, session_id: str) -> dict[str, object] | None:
+        try:
+            with self._connect() as connection:
+                session = connection.execute(
+                    "SELECT * FROM chat_sessions WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if session is None:
+                    return None
+                messages = connection.execute(
+                    """
+                    SELECT message_id, role, content, citations_json, created_at
+                    FROM chat_messages WHERE session_id = ?
+                    ORDER BY created_at ASC, message_id ASC
+                    """,
+                    (session_id,),
+                ).fetchall()
+            return {
+                "session_id": session["session_id"],
+                "title": session["title"],
+                "source_ids": json.loads(session["source_ids_json"]),
+                "created_at": session["created_at"],
+                "updated_at": session["updated_at"],
+                "messages": [
+                    {
+                        "message_id": row["message_id"],
+                        "role": row["role"],
+                        "content": row["content"],
+                        "citations": json.loads(row["citations_json"]),
+                        "created_at": row["created_at"],
+                    }
+                    for row in messages
+                ],
+            }
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            raise ResourceStoreError("Could not read chat history.") from exc
+
+    def delete_chat_session(self, session_id: str) -> bool:
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    "DELETE FROM chat_sessions WHERE session_id = ?", (session_id,)
+                )
+            return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not delete chat history.") from exc
 
     def list(self) -> list[ResourceRecord]:
         try:

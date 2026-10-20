@@ -39,6 +39,7 @@ from .ocr import GOOGLE_OCR_PROVIDER_KEY
 from .llm_provider import BEDROCK_USAGE_PROVIDER_KEY
 from .resource_store import (
     ProcessingJob,
+    ResourceProcessingError,
     ResourceRecord,
     ResourceStore,
     ResourceStoreError,
@@ -48,9 +49,11 @@ from .youtube_ingestion import parse_youtube_url
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    store = get_resource_store()
+    application.state.resource_store = store
     if BEDROCK_CHAT_ENABLED:
         application.state.chat_service = build_local_bedrock_chat_service(
-            get_resource_store()
+            store
         )
     yield
 
@@ -63,7 +66,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.getenv("LEARNFLOW_CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -360,6 +363,39 @@ def list_materials() -> dict[str, list[dict[str, object]]]:
             status_code=503, detail="Local resource metadata storage is unavailable."
         ) from error
     return {"materials": [resource_payload(store, record) for record in records]}
+
+
+@app.delete("/materials/{resource_id}")
+def delete_material(resource_id: str) -> dict[str, str]:
+    normalized_id = resource_id.lower()
+    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
+    try:
+        store = get_resource_store()
+        record = store.get_by_resource_id(normalized_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Resource was not found.")
+        if not store.delete(normalized_id, reject_processing=True):
+            raise HTTPException(
+                status_code=404, detail="Resource was not found."
+            )
+    except ResourceProcessingError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Local resource data could not be deleted."
+        ) from error
+
+    if record.extension != ".youtube":
+        upload_directory = UPLOAD_DIR.resolve()
+        candidate = (upload_directory / record.stored_filename).resolve()
+        if candidate.parent == upload_directory:
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                # The database row and its derived indexes are already removed.
+                pass
+    return {"resource_id": normalized_id, "status": "deleted"}
 
 
 @app.get("/materials/{resource_id}/status")

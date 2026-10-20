@@ -21,6 +21,35 @@ type ExtractedUnit = {
   end_seconds?: number
 }
 
+type MaterialRecord = {
+  resource_id: string
+  original_filename: string
+  source_type: string
+  status: 'uploaded' | 'processing' | 'ready' | 'failed'
+  error: string | null
+  created_at: string
+  updated_at: string
+  source_url: string | null
+  processing_job: { status: string; error: string | null } | null
+}
+
+type ChatMessage = {
+  message_id: string
+  role: 'user' | 'assistant'
+  content: string
+  citations: Array<{ source_id: string; source_type: string; page?: number; slide?: number; image?: number }>
+  created_at: string
+}
+
+type ChatSession = {
+  session_id: string
+  title: string
+  source_ids: string[]
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -40,6 +69,11 @@ function formatTimestamp(seconds = 0) {
     : `${minutes}:${String(remainder).padStart(2, '0')}`
 }
 
+function formatDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
 function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -54,6 +88,44 @@ function App() {
   const [extractedContent, setExtractedContent] = useState<ExtractedUnit[]>([])
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [activeYoutubeUrl, setActiveYoutubeUrl] = useState('')
+  const [materials, setMaterials] = useState<MaterialRecord[]>([])
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
+  const [chatSessionId, setChatSessionId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatQuestion, setChatQuestion] = useState('')
+  const [chatSourceIds, setChatSourceIds] = useState<string[]>([])
+  const [chatBusy, setChatBusy] = useState(false)
+  const [chatError, setChatError] = useState('')
+  const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
+  const [historyMessage, setHistoryMessage] = useState('')
+  const [historyBusy, setHistoryBusy] = useState(false)
+
+  const loadHistories = useCallback(async () => {
+    setHistoryBusy(true)
+    try {
+      const [materialsResponse, chatsResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/materials`),
+        fetch(`${API_BASE_URL}/chat/history`),
+      ])
+      const materialsPayload = await materialsResponse.json()
+      const chatsPayload = await chatsResponse.json()
+      if (!materialsResponse.ok) throw new Error(materialsPayload.detail || 'Processed data history could not be loaded.')
+      if (!chatsResponse.ok) throw new Error(chatsPayload.detail || 'Chat history could not be loaded.')
+      const nextMaterials: MaterialRecord[] = materialsPayload.materials || []
+      setMaterials(nextMaterials)
+      setChatSessions(chatsPayload.sessions || [])
+      setChatSourceIds((current) => current.length
+        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
+        : nextMaterials.filter((item) => item.status === 'ready' && item.source_type !== 'video').map((item) => item.resource_id))
+      setHistoryMessage('')
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded.')
+    } finally {
+      setHistoryBusy(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadHistories() }, [loadHistories])
 
   const selectFile = (file: File) => {
     if (!ACCEPTED_EXTENSIONS.includes(fileExtension(file.name))) {
@@ -101,6 +173,7 @@ function App() {
         setMessage(response.deduplicated
           ? 'This material already exists. Its saved processing result will be reused.'
           : 'Uploaded securely. Local text extraction and OCR have been queued automatically.')
+        void loadHistories()
       } else {
         let detail = 'The upload could not be completed. Please try again.'
         try {
@@ -136,7 +209,8 @@ function App() {
     setExtractionMessage(referenceType === 'timestamp'
       ? `Indexed ${payload.content.length} timestamped caption segments.`
       : `Processed ${payload.content.length} ${units} with text extraction and OCR.`)
-  }, [])
+    void loadHistories()
+  }, [loadHistories])
 
   const importYoutube = async () => {
     if (!youtubeUrl.trim() || status === 'uploading') return
@@ -160,6 +234,7 @@ function App() {
       setMessage(payload.deduplicated
         ? 'This YouTube video already exists. Its saved transcript will be reused.'
         : 'YouTube link added. Timestamped captions are queued for processing.')
+      void loadHistories()
     } catch (error) {
       setStatus('error')
       setMessage(error instanceof Error ? error.message : 'The YouTube link could not be imported.')
@@ -186,6 +261,7 @@ function App() {
         } else if (payload.status === 'failed' || job?.status === 'failed') {
           setExtractionStatus('error')
           setExtractionMessage(job?.error || payload.error || 'Local processing failed. You can retry it.')
+          void loadHistories()
         } else if (job?.status === 'processing') {
           setExtractionStatus('processing')
           setExtractionMessage(job.progress_total
@@ -231,6 +307,107 @@ function App() {
     }
   }
 
+  const askChat = async () => {
+    const question = chatQuestion.trim()
+    if (!question || chatBusy || chatSourceIds.length === 0) return
+    setChatBusy(true)
+    setChatError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: chatSessionId,
+          question,
+          allowed_source_ids: chatSourceIds,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The answer could not be generated.')
+      setChatMessages((current) => [
+        ...current,
+        { message_id: crypto.randomUUID(), role: 'user', content: question, citations: [], created_at: new Date().toISOString() },
+        { message_id: crypto.randomUUID(), role: 'assistant', content: payload.answer, citations: payload.citations || [], created_at: new Date().toISOString() },
+      ])
+      setChatQuestion('')
+      void loadHistories()
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'The answer could not be generated.')
+    } finally {
+      setChatBusy(false)
+    }
+  }
+
+  const startNewChat = () => {
+    setChatSessionId(crypto.randomUUID().replaceAll('-', ''))
+    setChatMessages([])
+    setChatError('')
+    setChatQuestion('')
+  }
+
+  const openChatSession = async (sessionId: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/history/${sessionId}`)
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'This chat could not be opened.')
+      setChatSessionId(payload.session_id)
+      setChatMessages(payload.messages || [])
+      const readyIds = new Set(materials.filter((item) => item.status === 'ready').map((item) => item.resource_id))
+      setChatSourceIds((payload.source_ids || []).filter((id: string) => readyIds.has(id)))
+      setChatError('')
+      document.getElementById('chat')?.scrollIntoView({ behavior: 'smooth' })
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'This chat could not be opened.')
+    }
+  }
+
+  const deleteChatSession = async (session: ChatSession) => {
+    if (!window.confirm(`Delete this chat history?\n\n“${session.title}”`)) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/chat/history/${session.session_id}`, { method: 'DELETE' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The chat could not be deleted.')
+      if (chatSessionId === session.session_id) startNewChat()
+      await loadHistories()
+      setHistoryMessage('Chat history deleted.')
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'The chat could not be deleted.')
+    }
+  }
+
+  const deleteMaterial = async (material: MaterialRecord) => {
+    if (material.status === 'processing') return
+    if (!window.confirm(`Permanently delete “${material.original_filename}” and its processed data? This also removes its cached extraction, chunks, and embeddings.`)) return
+    try {
+      const response = await fetch(`${API_BASE_URL}/materials/${material.resource_id}`, { method: 'DELETE' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
+      setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
+      if (uploadedResourceId === material.resource_id) {
+        setUploadedResourceId('')
+        setExtractedContent([])
+        setExtractionStatus('idle')
+        setExtractionMessage('')
+      }
+      await loadHistories()
+      setHistoryMessage('Material and its processed data deleted.')
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'The material could not be deleted.')
+    }
+  }
+
+  const retryHistoryMaterial = async (material: MaterialRecord) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/materials/${material.resource_id}/process`, { method: 'POST' })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The material could not be queued for retry.')
+      await loadHistories()
+      setHistoryMessage('Processing retry queued. The history will update when it finishes.')
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'The material could not be queued for retry.')
+    }
+  }
+
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     setIsDragging(false)
@@ -247,6 +424,8 @@ function App() {
         </a>
         <div className="nav-links">
           <a className="active" href="#workspace">Workspace</a>
+          <a href="#chat">Study chat</a>
+          <a href="#history">History</a>
           <a href="#how-it-works">How it works</a>
         </div>
         <button className="profile-button" type="button" aria-label="Open profile menu">
@@ -416,6 +595,123 @@ function App() {
               </div>
             )}
           </article>
+        </section>
+
+        <section className="chat-section" id="chat">
+          <div className="section-heading">
+            <div><p className="eyebrow">GROUNDED STUDY HELP</p><h2>Ask about your materials</h2></div>
+            <button className="secondary-button" type="button" onClick={startNewChat}>New chat</button>
+          </div>
+          <div className="chat-layout">
+            <aside className="source-picker">
+              <h3>Use ready materials</h3>
+              {materials.filter((item) => item.status === 'ready' && item.source_type !== 'video').length ? (
+                materials.filter((item) => item.status === 'ready' && item.source_type !== 'video').map((material) => (
+                  <label className="source-option" key={material.resource_id}>
+                    <input
+                      type="checkbox"
+                      checked={chatSourceIds.includes(material.resource_id)}
+                      onChange={(event) => setChatSourceIds((current) => event.target.checked
+                        ? [...new Set([...current, material.resource_id])]
+                        : current.filter((id) => id !== material.resource_id))}
+                    />
+                    <span title={material.original_filename}>{material.original_filename}</span>
+                  </label>
+                ))
+              ) : <p className="history-muted">Finish processing a document or image to use it in chat.</p>}
+              <p className="history-muted">Video chat will be available with timestamp-aware playback.</p>
+            </aside>
+            <div className="chat-panel">
+              <div className="chat-messages" aria-live="polite">
+                {chatMessages.length ? chatMessages.map((item) => (
+                  <article className={`chat-message ${item.role}`} key={item.message_id}>
+                    <strong>{item.role === 'user' ? 'You' : 'LearnFlow AI'}</strong>
+                    <p>{item.content}</p>
+                    {item.citations.length > 0 && <small>
+                      Sources: {item.citations.map((citation, index) => {
+                        const sourceName = materials.find((material) => material.resource_id === citation.source_id)?.original_filename || 'Material'
+                        const location = citation.page ? ` · page ${citation.page}`
+                          : citation.slide ? ` · slide ${citation.slide}`
+                            : citation.image ? ` · image ${citation.image}` : ''
+                        return `${index ? '; ' : ''}${sourceName}${location}`
+                      }).join('')}
+                    </small>}
+                  </article>
+                )) : (
+                  <div className="chat-empty"><span aria-hidden="true">✦</span><h3>Start with a question</h3><p>Answers use only the ready materials you select.</p></div>
+                )}
+              </div>
+              {chatError && <p className="history-alert" role="alert">{chatError}</p>}
+              <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void askChat() }}>
+                <textarea
+                  value={chatQuestion}
+                  onChange={(event) => setChatQuestion(event.target.value)}
+                  placeholder="Ask a question about your selected materials…"
+                  aria-label="Question for LearnFlow AI"
+                  maxLength={4000}
+                />
+                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim()}>
+                  {chatBusy ? 'Thinking…' : 'Ask'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
+
+        <section className="history-section" id="history">
+          <div className="section-heading">
+            <div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div>
+            <button className="secondary-button" type="button" onClick={() => void loadHistories()} disabled={historyBusy}>
+              {historyBusy ? 'Refreshing…' : 'Refresh history'}
+            </button>
+          </div>
+          <div className="history-tabs" role="tablist" aria-label="History type">
+            <button type="button" role="tab" aria-selected={historyTab === 'processed'} className={historyTab === 'processed' ? 'selected' : ''} onClick={() => setHistoryTab('processed')}>
+              Processed data <span>{materials.length}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={historyTab === 'chat'} className={historyTab === 'chat' ? 'selected' : ''} onClick={() => setHistoryTab('chat')}>
+              Chat history <span>{chatSessions.length}</span>
+            </button>
+          </div>
+          {historyMessage && <p className="history-alert" role="status">{historyMessage}</p>}
+          {historyTab === 'processed' ? (
+            <div className="history-list">
+              {materials.length ? materials.map((material) => {
+                const processingError = material.error || material.processing_job?.error
+                return (
+                  <article className="history-card" key={material.resource_id}>
+                    <div className="history-card-main">
+                      <div className="history-title-row"><h3 title={material.original_filename}>{material.original_filename}</h3><span className={`history-status ${material.status}`}>{material.status}</span></div>
+                      <p>{material.source_type === 'video' ? material.source_url || 'YouTube video' : material.source_type.toUpperCase()} · Added {formatDate(material.created_at)}</p>
+                      {processingError && <p className="history-error">Processing error: {processingError}</p>}
+                    </div>
+                    <div className="history-actions">
+                      {material.status === 'failed' && <button className="secondary-button" type="button" onClick={() => void retryHistoryMaterial(material)}>Retry</button>}
+                      <button className="delete-button" type="button" disabled={material.status === 'processing'} onClick={() => void deleteMaterial(material)}>
+                        {material.status === 'processing' ? 'Processing…' : 'Delete data'}
+                      </button>
+                    </div>
+                  </article>
+                )
+              }) : <p className="history-muted">No processed materials are saved in the local database.</p>}
+            </div>
+          ) : (
+            <div className="history-list">
+              {chatSessions.length ? chatSessions.map((session) => (
+                <article className="history-card" key={session.session_id}>
+                  <button className="history-open" type="button" onClick={() => void openChatSession(session.session_id)}>
+                    <h3>{session.title}</h3>
+                    <p>{session.message_count} messages · Updated {formatDate(session.updated_at)}</p>
+                  </button>
+                  <div className="history-actions">
+                    <button className="secondary-button" type="button" onClick={() => void openChatSession(session.session_id)}>Open</button>
+                    <button className="delete-button" type="button" onClick={() => void deleteChatSession(session)}>Delete chat</button>
+                  </div>
+                </article>
+              )) : <p className="history-muted">Completed chat turns will be saved here.</p>}
+            </div>
+          )}
+          <p className="history-footnote">Deleting a material removes its database record, cached extracted text, chunks, and embeddings. Chat history is stored locally in this app’s SQLite database.</p>
         </section>
 
         <section className="how-section" id="how-it-works">

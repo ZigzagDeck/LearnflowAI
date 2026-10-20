@@ -47,15 +47,28 @@ is needed before those materials can be considered safe at a prior playback
 timestamp. Video evidence crossing the cutoff is **excluded**, not truncated.
 The retrieval team may provide timestamp-split chunks for better coverage.
 
-## Not completed by this PR
+## Local application behavior
+
+The local frontend now offers document and image Q&A, grounded candidate citations,
+and a SQLite-backed history of completed chat turns. Chat history can be opened or
+deleted in the History section. The same section lists uploaded materials, saved
+processing errors, and per-material retry or delete controls. Deleting a material
+also removes its extraction cache, normalized chunks, and embedding vectors.
+
+This remains a single-user local integration: it has no account authentication,
+and saved conversations are not sent as context to later model requests. Each
+question is answered independently against the currently selected ready sources.
+Video chat is not available until a timestamp-aware player provides the playback
+cutoff.
+
+## Still not completed
 
 - Dense/video retrieval adapters or source authorization persistence. A filtered
   SQLite FTS5 document adapter now exists in `backend/retrieval.py`, but remains
   disconnected from `/chat` until authorization is real.
-- Multi-turn chat history or session storage
 - Model-account connectivity/deployment smoke test
 - Sentence-level citation entailment and hallucination evaluation
-- Quiz API and frontend chat UX
+- Quiz API
 
 These remain explicit dependencies. Keep the PR in draft and do not publicly
 enable the route until source ownership and real retrieval are integrated.
