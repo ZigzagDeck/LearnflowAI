@@ -54,6 +54,18 @@ VOYAGE_EMBEDDING_BATCH_SIZE = max(
 VOYAGE_MONTHLY_TOKEN_LIMIT = max(
     1, int(os.getenv("LEARNFLOW_VOYAGE_MONTHLY_TOKEN_LIMIT", "10000000"))
 )
+BEDROCK_CHAT_ENABLED = _environment_flag("LEARNFLOW_BEDROCK_CHAT_ENABLED")
+BEDROCK_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
+BEDROCK_MODEL_ID = os.getenv(
+    "LEARNFLOW_BEDROCK_MODEL_ID", "amazon.nova-lite-v1:0"
+).strip()
+BEDROCK_MAX_OUTPUT_TOKENS = max(
+    64, min(2_000, int(os.getenv("LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS", "600")))
+)
+BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT = max(
+    1,
+    int(os.getenv("LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT", "2000000")),
+)
 YOUTUBE_TRANSCRIPT_LANGUAGES = tuple(
     language.strip()
     for language in os.getenv(

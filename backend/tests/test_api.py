@@ -107,6 +107,19 @@ def test_embedding_usage_reports_local_monthly_counter(client):
     )
 
 
+def test_bedrock_usage_reports_guard_without_calling_aws(client):
+    response = client.get("/usage/bedrock")
+
+    assert response.status_code == 200
+    assert response.json()["enabled"] is False
+    assert response.json()["model"] == backend_main.BEDROCK_MODEL_ID
+    assert response.json()["used_conservative_token_units"] == 0
+    assert (
+        response.json()["monthly_token_unit_limit"]
+        == backend_main.BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT
+    )
+
+
 def test_upload_and_extract_pdf_with_page_reference(client):
     response = upload(client, "lecture.pdf", make_pdf())
     assert response.status_code == 200

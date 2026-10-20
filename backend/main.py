@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 from functools import lru_cache
 import hashlib
 import re
@@ -11,9 +12,13 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
+from .chat_integration import build_local_bedrock_chat_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
+    BEDROCK_CHAT_ENABLED,
+    BEDROCK_MODEL_ID,
+    BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT,
     DATABASE_PATH,
     EMBEDDING_PROVIDER,
     EXTRACTION_PIPELINE_VERSION,
@@ -31,6 +36,7 @@ from .embeddings import VOYAGE_USAGE_PROVIDER_KEY
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
 from .ocr import GOOGLE_OCR_PROVIDER_KEY
+from .llm_provider import BEDROCK_USAGE_PROVIDER_KEY
 from .resource_store import (
     ProcessingJob,
     ResourceRecord,
@@ -40,7 +46,16 @@ from .resource_store import (
 from .youtube_ingestion import parse_youtube_url
 
 
-app = FastAPI(title="LearnFlow AI API")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    if BEDROCK_CHAT_ENABLED:
+        application.state.chat_service = build_local_bedrock_chat_service(
+            get_resource_store()
+        )
+    yield
+
+
+app = FastAPI(title="LearnFlow AI API", lifespan=lifespan)
 app.middleware("http")(request_logging_middleware)
 app.include_router(chat_router)
 
@@ -167,6 +182,25 @@ def embedding_usage() -> dict[str, object]:
         "monthly_token_unit_limit": (
             VOYAGE_MONTHLY_TOKEN_LIMIT if EMBEDDING_PROVIDER == "voyage" else None
         ),
+    }
+
+
+@app.get("/usage/bedrock")
+def bedrock_usage() -> dict[str, object]:
+    try:
+        period, used_units = get_resource_store().current_monthly_usage(
+            BEDROCK_USAGE_PROVIDER_KEY
+        )
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Amazon Bedrock usage tracking is unavailable."
+        ) from error
+    return {
+        "enabled": BEDROCK_CHAT_ENABLED,
+        "model": BEDROCK_MODEL_ID,
+        "period": period,
+        "used_conservative_token_units": used_units,
+        "monthly_token_unit_limit": BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT,
     }
 
 

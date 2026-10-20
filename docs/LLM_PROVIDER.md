@@ -1,53 +1,66 @@
 # AI model provider gateway
 
-`backend/llm_provider.py` exposes a `ModelProvider` protocol, allowing backend
-orchestration to use any compatible implementation. The bundled adapter speaks
-an OpenAI-compatible **chat completions** endpoint; not every vendor supports it.
+`backend/llm_provider.py` exposes a `ModelProvider` protocol so grounded chat is
+not coupled to one model vendor. LearnFlowAI's default path is
+`BedrockConverseProvider`, which uses the official Boto3 Bedrock Runtime client.
+The older OpenAI-compatible adapter remains available but is not wired by default.
 
-## Configuration
+## Amazon Bedrock configuration
 
-Set these values **server side** (never use `VITE_` for secrets):
+Set these values server-side. Never expose credentials through a `VITE_` variable:
 
-- `LEARNFLOW_MODEL_ENDPOINT`: HTTPS URL for a trusted provider's chat endpoint
-- `LEARNFLOW_MODEL_NAME`: approved model name
-- `LEARNFLOW_MODEL_API_KEY`: token for the model provider
+- `LEARNFLOW_BEDROCK_CHAT_ENABLED=true`
+- `AWS_REGION=us-east-1`
+- `AWS_BEARER_TOKEN_BEDROCK`: a development Bedrock-only API key; omit this when using standard temporary AWS credentials or an IAM role
+- `LEARNFLOW_BEDROCK_MODEL_ID=amazon.nova-lite-v1:0`
+- `LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600`
+- `LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000`
 
-The endpoint is trusted deployment configuration only. Do not accept it from API
-requests. Configure secret values with the hosting provider's secrets system.
+The Bedrock API key or AWS credentials are resolved only by Boto3's normal
+credential chain. The browser cannot submit an endpoint, model, or credential.
 
-## Example service usage
+## Cost and request boundary
 
-```python
-from backend.llm_provider import ProviderConfig, OpenAICompatibleProvider
-provider = OpenAICompatibleProvider(ProviderConfig.from_env())
-answer = await provider.answer(question, [hit.text for hit in verified_hits])
-```
+Each generation request receives no more than eight already-authorized evidence
+chunks, each truncated to 3,000 characters. Output is capped by configuration.
+Before contacting Bedrock, the provider atomically reserves conservative units
+equal to the UTF-8 prompt bytes plus the complete output allowance. If the local
+monthly limit would be exceeded, it sends no request. `GET /usage/bedrock`
+reports this counter.
 
-## Important trust boundary
+This guard is deliberately conservative and is not a currency estimate or an AWS
+Budget. Deleting the local database resets it, so an account-level AWS Budget
+alert remains an important independent warning.
 
-The caller MUST first enforce source ownership, `allowed_source_ids`,
-and watched-time filtering. Never send future video segments to the model.
-The LLM is not an authority for citations: attach validated citation metadata
-from the exact retrieved evidence on the server after generating the answer.
+## Local single-user integration
 
-The provider adapter alone does not implement a RAG pipeline, quiz API,
-grounding correctness evaluation or Bedrock-specific authentication.
+When explicitly enabled, `backend/chat_integration.py` connects:
+
+1. a local authorizer that accepts only ready resources in this SQLite store;
+2. filtered local hybrid retrieval;
+3. Bedrock grounded-answer generation; and
+4. server-owned citation metadata.
+
+The model never chooses citation IDs. The API returns citations from the exact
+retrieved chunks accepted by `GroundedChatService`. Video chunks ending after the
+current playback position remain excluded.
+
+This local authorizer is suitable for a private single-user demo. A public or
+multi-user deployment must add real sign-in and resource ownership checks before
+enabling chat.
+
+## Optional generic adapter
+
+`OpenAICompatibleProvider` is retained for explicitly configured compatible APIs.
+Its server-only settings are `LEARNFLOW_MODEL_ENDPOINT`, `LEARNFLOW_MODEL_NAME`,
+and `LEARNFLOW_MODEL_API_KEY`. It is not part of the default Bedrock path.
 
 ## Tests
 
 ```bash
 python -m pip install -r backend/requirements-dev.txt
-python -m pytest backend/tests/test_llm_provider.py -q
+python -m pytest backend/tests/test_bedrock_provider.py backend/tests/test_chat_service.py -q
 ```
 
-No API key is needed for tests; the network is mocked.
-
-## Runtime dependency
-
-The production backend installs `httpx` through `backend/requirements.txt`.
-The adapter is imported directly only by trusted backend code and currently
-does not expose a public route on its own. When integrating it into chat,
-configure a trusted HTTPS endpoint and handle provider errors as HTTP 503.
-
-A passing mock test does **not** demonstrate an actual model account, a
-production deployment, or verified answer grounding.
+Tests use a fake Converse client and make no AWS request. Passing mocks do not
+prove live model access, production authentication, or sentence-level grounding.

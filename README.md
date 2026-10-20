@@ -13,7 +13,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Guarded Voyage AI embeddings with SQLite lexical/dense rank fusion
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
-YouTube caption ingestion, citation-safe local RAG foundations, and document OCR are implemented. Summaries, quizzes, uploaded-video transcription, and production Bedrock chat wiring remain incomplete.
+YouTube caption ingestion, citation-safe local RAG, document OCR, and opt-in Amazon Bedrock grounded-answer generation are implemented. Summaries, quizzes, uploaded-video transcription, production authentication, and the chat UI remain incomplete.
 
 ## Folder guide
 
@@ -142,6 +142,23 @@ Keep the worker running while uploading material. It polls the local SQLite queu
 Paste a direct public YouTube video, Shorts, or `youtu.be` link in the upload card. The worker retrieves an existing manual or automatically generated caption track, preserves its real timestamps, embeds the transcript with the same guarded embedding provider, and stores everything in local SQLite. It does not download video or audio, so this path has negligible additional RAM use.
 
 Set `LEARNFLOW_YOUTUBE_TRANSCRIPT_LANGUAGES` to a comma-separated priority list such as `en,en-US,en-GB,hi`. Videos that are private, restricted, blocked from the deployment host, or have no usable captions return a clear processing error. This lightweight caption library uses YouTube's internal web endpoints, so it may require maintenance when YouTube changes them.
+
+## Amazon Bedrock grounded chat
+
+Bedrock is the only AWS service used by LearnFlowAI. For the fastest development setup, create an Amazon Bedrock API key and save it as `AWS_BEARER_TOKEN_BEDROCK` in the untracked root `.env`. Standard temporary AWS credentials or an IAM role also work through Boto3's normal credential chain.
+
+```dotenv
+LEARNFLOW_BEDROCK_CHAT_ENABLED=true
+AWS_REGION=us-east-1
+AWS_BEARER_TOKEN_BEDROCK=replace-with-a-new-bedrock-api-key
+LEARNFLOW_BEDROCK_MODEL_ID=amazon.nova-lite-v1:0
+LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=600
+LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
+```
+
+The backend uses Bedrock Runtime's `Converse` operation and sends at most eight retrieved evidence chunks. Before each request it reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
+
+`LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only for a private, single-user deployment. The current local authorizer confirms that selected resources exist and are processed, but a public multi-user deployment still needs real sign-in and ownership checks.
 
 ## Test the health endpoint
 

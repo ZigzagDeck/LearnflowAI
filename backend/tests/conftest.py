@@ -10,3 +10,6 @@ def configure_local_services(monkeypatch, tmp_path_factory):
 
     store = ResourceStore(tmp_path_factory.mktemp("registry") / "learnflow.db")
     monkeypatch.setattr(backend_main, "get_resource_store", lambda: store)
+    monkeypatch.setattr(backend_main, "BEDROCK_CHAT_ENABLED", False)
+    if hasattr(backend_main.app.state, "chat_service"):
+        del backend_main.app.state.chat_service
