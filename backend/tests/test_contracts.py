@@ -11,6 +11,7 @@ from backend.contracts import (
     {"source_id": "pdf1", "source_type": "pdf", "chunk_id": "c1", "page": 2},
     {"source_id": "deck1", "source_type": "pptx", "chunk_id": "c2", "slide": 3},
     {"source_id": "video1", "source_type": "video", "chunk_id": "c3", "start_seconds": 0, "end_seconds": 12.5},
+    {"source_id": "image1", "source_type": "image", "chunk_id": "c4", "image": 1},
 ])
 def test_valid_citation(data):
     assert Citation.model_validate(data).source_id == data["source_id"]
@@ -20,6 +21,7 @@ def test_valid_citation(data):
     {"source_id": "pdf1", "source_type": "pdf", "chunk_id": "c1", "slide": 3},
     {"source_id": "video1", "source_type": "video", "chunk_id": "c1", "start_seconds": 20, "end_seconds": 10},
     {"source_id": "deck1", "source_type": "pptx", "chunk_id": "c1"},
+    {"source_id": "image1", "source_type": "image", "chunk_id": "c1", "page": 1},
 ])
 def test_invalid_citation(data):
     with pytest.raises(ValidationError):

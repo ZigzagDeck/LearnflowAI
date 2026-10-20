@@ -8,13 +8,16 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
-from .extraction import extract_pdf, extract_pptx
+from .chat_api import router as chat_router
+from .extraction import extract_image, extract_pdf, extract_pptx
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
+from .ocr import OCRUnavailableError, get_ocr_reader
 
 
 app = FastAPI(title="LearnFlow AI API")
 app.middleware("http")(request_logging_middleware)
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,17 +30,14 @@ app.add_middleware(
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 MAX_UPLOAD_SIZE_MB = int(os.getenv("LEARNFLOW_MAX_UPLOAD_SIZE_MB", "100"))
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-EXTRACTION_TIMEOUT_SECONDS = 30
-DOCUMENT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}\.(pdf|ppt|pptx)$")
+EXTRACTION_TIMEOUT_SECONDS = int(os.getenv("LEARNFLOW_EXTRACTION_TIMEOUT_SECONDS", "180"))
+DOCUMENT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}\.(pdf|pptx|png|jpe?g)$")
 ALLOWED_EXTENSIONS = {
     ".pdf",
-    ".ppt",
     ".pptx",
-    ".mp4",
-    ".webm",
-    ".mov",
-    ".avi",
-    ".mkv",
+    ".png",
+    ".jpg",
+    ".jpeg",
 }
 
 
@@ -68,7 +68,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, str | int]:
     if not original_name or extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=415,
-            detail="Unsupported file type. Please upload a PDF, PPT, PPTX, MP4, WebM, MOV, AVI, or MKV file.",
+            detail="Unsupported file type. Please upload a PDF, PPTX, PNG, JPG, or JPEG file.",
         )
 
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -114,19 +114,19 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, str | int]:
 
 
 @app.post("/materials/{document_id}/extract")
-async def extract_material(document_id: str) -> dict[str, str | list[dict[str, int | str | bool]]]:
+async def extract_material(document_id: str) -> dict[str, object]:
     path, extension = get_uploaded_file(document_id)
 
-    if extension == ".ppt":
-        raise HTTPException(
-            status_code=415,
-            detail="Legacy .ppt files cannot be extracted with the current local extractor. Please convert the file to .pptx.",
-        )
-
-    extractor = extract_pdf if extension == ".pdf" else extract_pptx
+    extractor = {
+        ".pdf": extract_pdf,
+        ".pptx": extract_pptx,
+        ".png": extract_image,
+        ".jpg": extract_image,
+        ".jpeg": extract_image,
+    }[extension]
     try:
         content = await asyncio.wait_for(
-            run_in_threadpool(extractor, path),
+            run_in_threadpool(extractor, path, get_ocr_reader()),
             timeout=EXTRACTION_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError as error:
@@ -139,6 +139,11 @@ async def extract_material(document_id: str) -> dict[str, str | list[dict[str, i
             status_code=422,
             detail=f"Could not extract text from this file: {error}",
         ) from error
+    except OCRUnavailableError as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Local OCR is unavailable. Install the backend OCR dependencies and retry.",
+        ) from error
     except Exception as error:
         raise HTTPException(
             status_code=422,
@@ -146,10 +151,10 @@ async def extract_material(document_id: str) -> dict[str, str | list[dict[str, i
         ) from error
 
     if not any(item["has_text"] for item in content):
-        unit_name = "pages" if extension == ".pdf" else "slides"
+        unit_name = {".pdf": "pages", ".pptx": "slides"}.get(extension, "image")
         raise HTTPException(
             status_code=422,
-            detail=f"No extractable text was found in this document's {unit_name}. Scanned PDFs may require OCR.",
+            detail=f"No readable text was found in this material's {unit_name} after text extraction and OCR.",
         )
 
     return {

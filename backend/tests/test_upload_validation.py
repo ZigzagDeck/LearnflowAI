@@ -3,6 +3,7 @@ from io import BytesIO
 import pytest
 import pymupdf
 from pptx import Presentation
+from PIL import Image
 from fastapi.testclient import TestClient
 import backend.main as api
 
@@ -32,6 +33,12 @@ def pptx_bytes():
     slide.shapes.title.text = "Slide with citation"
     stream = BytesIO()
     prs.save(stream)
+    return stream.getvalue()
+
+
+def image_bytes(format_name="PNG"):
+    stream = BytesIO()
+    Image.new("RGB", (120, 60), "white").save(stream, format=format_name)
     return stream.getvalue()
 
 
@@ -73,3 +80,33 @@ def test_upload_and_extract_real_content(client, ext, contents, kind):
     assert output.status_code == 200, output.text
     assert output.json()["content"][0]["reference_type"] == kind
     assert output.json()["content"][0]["reference_number"] == 1
+
+
+@pytest.mark.parametrize("filename,format_name", [
+    ("diagram.png", "PNG"),
+    ("diagram.jpg", "JPEG"),
+    ("diagram.jpeg", "JPEG"),
+])
+def test_accepts_supported_images(client, filename, format_name, monkeypatch):
+    api_client, directory = client
+
+    class ImageOCR:
+        def read_text(self, image):
+            return "Input Validate Output"
+
+    monkeypatch.setattr(api, "get_ocr_reader", lambda: ImageOCR())
+    response = post(api_client, filename, image_bytes(format_name))
+    assert response.status_code == 200, response.text
+    source = response.json()["stored_filename"]
+    assert (directory / source).is_file()
+    output = api_client.post(f"/materials/{source}/extract")
+    assert output.status_code == 200, output.text
+    assert output.json()["content"][0]["reference_type"] == "image"
+    assert output.json()["content"][0]["text"] == "Input Validate Output"
+
+
+def test_rejects_image_with_mismatched_extension(client):
+    api_client, directory = client
+    response = post(api_client, "diagram.png", image_bytes("JPEG"))
+    assert response.status_code == 415
+    assert list(directory.iterdir()) == []

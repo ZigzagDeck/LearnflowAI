@@ -80,7 +80,9 @@ class GroundedChatService:
             if citation.source_id not in allowed:
                 continue
             if channel == "document":
-                if citation.source_type not in (SourceType.PDF, SourceType.PPTX):
+                if citation.source_type not in (
+                    SourceType.PDF, SourceType.PPTX, SourceType.IMAGE
+                ):
                     continue
             elif (
                 citation.source_type != SourceType.VIDEO

@@ -3,25 +3,27 @@
 LearnFlow AI is a learning workspace being built in small milestones. The current milestone contains:
 
 - A React + TypeScript + Vite frontend
-- A Python + FastAPI backend with health, local material-upload, and text-extraction endpoints
-- A homepage with a material upload interface, extraction controls, and a readable learning workspace
+- A Python + FastAPI backend with health, local material-upload, and extraction endpoints
+- Local OCR enrichment for PDF pages, PPTX embedded images, and standalone PNG/JPEG images
+- A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
-AI processing, transcription, summaries, OCR, and RAG are intentionally **not implemented yet**.
+End-to-end RAG, transcription, summaries, quizzes, and Bedrock integration are **not implemented yet**. Grounded-chat contracts and orchestration boundaries exist, but no production retriever, source authorizer, or model provider is wired into the application.
 
 ## Folder guide
 
 - `src/` - The frontend source code. `App.tsx` contains the page structure, while `App.css` and `index.css` contain its styles.
 - `backend/` - The Python API. `main.py` defines the FastAPI application, CORS settings, validation, upload, and extraction endpoints.
-- `backend/extraction.py` - Small, separate PyMuPDF and python-pptx functions that return page- or slide-level text.
+- `backend/extraction.py` - PyMuPDF and python-pptx extraction with OCR enrichment and page/slide/image provenance.
+- `backend/ocr.py` - Lazy local RapidOCR adapter backed by ONNX Runtime.
 - `backend/uploads/` - Created automatically when the first upload succeeds. Local uploaded files are kept here and are ignored by Git.
 - `public/` - Static files that Vite serves directly.
 - `package.json` - Frontend commands and JavaScript dependencies.
 - `requirements.txt` - Python backend dependencies.
 - `.env.example` - Safe placeholder names for future configuration. It contains no real secrets.
 
-The upload endpoint accepts PDF, PPT, PPTX, MP4, WebM, MOV, AVI, and MKV files up to 100 MB by default. Set `LEARNFLOW_MAX_UPLOAD_SIZE_MB` before starting the backend to change that development limit.
+The upload endpoint currently accepts PDF, PPTX, PNG, JPG, and JPEG files up to 100 MB by default. The UI intentionally lists only formats that can be processed now. Set `LEARNFLOW_MAX_UPLOAD_SIZE_MB` before starting the backend to change that development limit.
 
-PDF and PPTX extraction is limited to 500 pages/slides, 2 million extracted characters, and 30 seconds per request. Legacy binary `.ppt` files can be uploaded, but `python-pptx` cannot read them; convert them to `.pptx` first.
+PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. The default processing timeout is 180 seconds and can be changed with `LEARNFLOW_EXTRACTION_TIMEOUT_SECONDS`. OCR is CPU-intensive; background processing is still required before large documents should be treated as production-ready.
 
 ## Prerequisites
 
@@ -95,11 +97,11 @@ curl.exe -X POST http://localhost:8000/materials/upload -F "file=@C:\path\to\you
 
 The API returns the original filename, file type, byte size, and a generated stored filename. The generated file is saved under `backend\uploads\`; it is not publicly served by the API. Unsupported extensions return `415`, and files over the configured limit return `413`.
 
-## Extract text from a PDF or PowerPoint
+## Extract text and scan visual content
 
-1. Upload a real `.pdf` or `.pptx` file using the browser interface.
-2. After the upload succeeds, select **Extract text**.
-3. The workspace displays the actual extracted text grouped by page or slide number.
+1. Upload a real `.pdf`, `.pptx`, `.png`, `.jpg`, or `.jpeg` file using the browser interface.
+2. After the upload succeeds, select **Extract text + OCR**.
+3. The workspace displays the processed text grouped by page, slide, or image number.
 
 The frontend calls:
 
@@ -107,7 +109,7 @@ The frontend calls:
 POST http://localhost:8000/materials/{stored_filename}/extract
 ```
 
-Use the safe `stored_filename` returned by the upload endpoint; do not send a local filesystem path. The extraction endpoint returns structured records with `reference_type`, `reference_number`, `text`, and `has_text`. It rejects invalid identifiers, missing files, unsupported formats, empty documents, and extraction failures.
+Use the safe `stored_filename` returned by the upload endpoint; do not send a local filesystem path. The extraction endpoint returns structured records with `reference_type`, `reference_number`, merged `text`, separate `native_text` and `ocr_text`, `ocr_applied`, `extraction_method`, and `has_text`. It rejects invalid identifiers, missing files, unsupported formats, empty documents, and extraction failures.
 
 To test extraction directly from PowerShell after uploading:
 
@@ -115,7 +117,7 @@ To test extraction directly from PowerShell after uploading:
 curl.exe -X POST http://localhost:8000/materials/REPLACE_WITH_STORED_FILENAME.pdf/extract
 ```
 
-Scanned PDFs often contain images rather than selectable text. They will report that no extractable text was found because OCR is intentionally outside this milestone.
+Each PDF page is rendered and scanned with local OCR even when selectable text exists, so screenshots and diagram labels are not silently skipped. Embedded raster images in PPTX files are also scanned. OCR recovers visible text, but it does not reliably understand arrows, spatial relationships, or the meaning of a workflow; that requires a later visual-understanding stage.
 
 ## Checks
 

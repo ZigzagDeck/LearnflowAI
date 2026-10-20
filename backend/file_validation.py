@@ -6,9 +6,9 @@ the API marks upload successful. Existing extraction is unchanged.
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 import pymupdf
+from PIL import Image
 
-OLE = bytes.fromhex("D0CF11E0A1B11AE1")
-EBML = bytes.fromhex("1A45DFA3")
+from .image_utils import InvalidImageError, load_rgb_image
 
 
 def validate_upload_content(path: Path, extension: str) -> None:
@@ -39,21 +39,16 @@ def validate_upload_content(path: Path, extension: str) -> None:
                         raise ValueError("PPTX archive member exceeds safe size limit.")
         except BadZipFile as exc:
             raise ValueError("Corrupt PPTX archive.") from exc
-    elif extension == ".ppt":
-        if not header.startswith(OLE):
-            raise ValueError("Invalid legacy PPT signature.")
-    elif extension == ".avi":
-        if len(header) < 12 or header[:4] != b"RIFF" or header[8:12] != b"AVI ":
-            raise ValueError("Invalid AVI container.")
-    elif extension in {".mp4", ".mov"}:
-        brands = (b"ftyp",) if extension == ".mp4" else (b"ftyp", b"moov", b"mdat", b"wide")
-        if len(header) < 12 or header[4:8] not in brands:
-            raise ValueError("Invalid MP4/MOV container.")
-    elif extension == ".mkv":
-        if not header.startswith(EBML):
-            raise ValueError("Invalid MKV container.")
-    elif extension == ".webm":
-        if not header.startswith(EBML) or b"webm" not in header:
-            raise ValueError("Invalid WebM container.")
+    elif extension in {".png", ".jpg", ".jpeg"}:
+        try:
+            image = load_rgb_image(path)
+        except InvalidImageError as exc:
+            raise ValueError(str(exc)) from exc
+        expected = "PNG" if extension == ".png" else "JPEG"
+        with Image.open(path) as source:
+            actual = source.format
+        image.close()
+        if actual != expected:
+            raise ValueError(f"Image contents do not match the {extension} extension.")
     else:
         raise ValueError("Unsupported content type.")

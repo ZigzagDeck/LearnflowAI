@@ -16,6 +16,7 @@ class SourceType(str, Enum):
     PDF = "pdf"
     PPTX = "pptx"
     VIDEO = "video"
+    IMAGE = "image"
 
 
 class MaterialStatus(str, Enum):
@@ -40,19 +41,24 @@ class Citation(StrictModel):
     # Page/slide are 1-based; timestamps are measured in seconds from video start.
     page: int | None = Field(default=None, ge=1)
     slide: int | None = Field(default=None, ge=1)
+    image: int | None = Field(default=None, ge=1)
     start_seconds: float | None = Field(default=None, ge=0)
     end_seconds: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_provenance(self):
         if self.source_type == SourceType.PDF:
-            valid = self.page is not None and all(v is None for v in (self.slide, self.start_seconds, self.end_seconds))
+            valid = self.page is not None and all(v is None for v in (self.slide, self.image, self.start_seconds, self.end_seconds))
         elif self.source_type == SourceType.PPTX:
-            valid = self.slide is not None and all(v is None for v in (self.page, self.start_seconds, self.end_seconds))
-        else:
+            valid = self.slide is not None and all(v is None for v in (self.page, self.image, self.start_seconds, self.end_seconds))
+        elif self.source_type == SourceType.VIDEO:
             valid = (self.start_seconds is not None and self.end_seconds is not None
                      and self.end_seconds >= self.start_seconds
-                     and self.page is None and self.slide is None)
+                     and self.page is None and self.slide is None and self.image is None)
+        else:
+            valid = self.image is not None and all(
+                v is None for v in (self.page, self.slide, self.start_seconds, self.end_seconds)
+            )
         if not valid:
             raise ValueError("Citation metadata must match the source type")
         return self

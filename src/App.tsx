@@ -4,17 +4,19 @@ import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const MAX_FILE_SIZE = 100 * 1024 * 1024
-const ACCEPTED_EXTENSIONS = ['.pdf', '.ppt', '.pptx', '.mp4', '.webm', '.mov', '.avi', '.mkv']
+const ACCEPTED_EXTENSIONS = ['.pdf', '.pptx', '.png', '.jpg', '.jpeg']
 const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
 
 type UploadStatus = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
 type ExtractionStatus = 'idle' | 'extracting' | 'success' | 'error'
 
 type ExtractedUnit = {
-  reference_type: 'page' | 'slide'
+  reference_type: 'page' | 'slide' | 'image'
   reference_number: number
   text: string
   has_text: boolean
+  ocr_applied: boolean
+  extraction_method: 'native' | 'ocr' | 'native+ocr'
 }
 
 function formatFileSize(bytes: number) {
@@ -42,7 +44,7 @@ function App() {
     if (!ACCEPTED_EXTENSIONS.includes(fileExtension(file.name))) {
       setSelectedFile(null)
       setStatus('error')
-      setMessage('That file type is not supported. Choose a PDF, presentation, or video file.')
+      setMessage('That file type is not supported. Choose a PDF, PPTX, PNG, or JPEG file.')
       return
     }
     if (file.size > MAX_FILE_SIZE) {
@@ -78,7 +80,7 @@ function App() {
         setStatus('success')
         setProgress(100)
         setUploadedDocumentId(response.stored_filename)
-        setMessage('Uploaded securely. You can now extract its text.')
+        setMessage('Uploaded securely. You can now process its text and images.')
       } else {
         let detail = 'The upload could not be completed. Please try again.'
         try {
@@ -104,7 +106,7 @@ function App() {
     if (!uploadedDocumentId || !selectedFile || extractionStatus === 'extracting') return
 
     setExtractionStatus('extracting')
-    setExtractionMessage('Reading pages and slides locally...')
+    setExtractionMessage('Extracting text and scanning images locally with OCR...')
     setExtractedContent([])
 
     try {
@@ -115,7 +117,9 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || 'The text could not be extracted.')
       setExtractedContent(payload.content)
       setExtractionStatus('success')
-      setExtractionMessage(`Text extracted from ${payload.content.length} ${fileExtension(selectedFile.name) === '.pdf' ? 'pages' : 'slides'}.`)
+      const extension = fileExtension(selectedFile.name)
+      const units = extension === '.pdf' ? 'pages' : extension === '.pptx' ? 'slides' : 'image'
+      setExtractionMessage(`Processed ${payload.content.length} ${units} with text extraction and OCR.`)
     } catch (error) {
       setExtractionStatus('error')
       setExtractionMessage(error instanceof Error ? error.message : 'The text could not be extracted.')
@@ -180,8 +184,10 @@ function App() {
             <div
               className="drop-zone"
               onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }}
-              onDragOver={(event) => event.preventDefault()}
-              onDragLeave={() => setIsDragging(false)}
+              onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false)
+              }}
               onDrop={handleDrop}
             >
               <input
@@ -200,7 +206,7 @@ function App() {
               </button>
               <p className="drop-hint">or drag and drop it here</p>
             </div>
-            <p className="file-note">PDF, PPT, PPTX, MP4, WebM, MOV, AVI, or MKV · Up to 100 MB</p>
+            <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
             {selectedFile && (
               <div className="selected-file">
                 <div className="file-summary">
@@ -214,9 +220,9 @@ function App() {
                 <button className="submit-upload" type="button" onClick={uploadFile} disabled={status === 'uploading' || status === 'success'}>
                   {status === 'uploading' ? `${progress}%` : status === 'success' ? 'Uploaded' : 'Upload material'}
                 </button>
-                {uploadedDocumentId && ['.pdf', '.ppt', '.pptx'].includes(fileExtension(selectedFile.name)) && (
+                {uploadedDocumentId && (
                   <button className="extract-button" type="button" onClick={extractMaterial} disabled={extractionStatus === 'extracting'}>
-                    {extractionStatus === 'extracting' ? 'Extracting text...' : extractionStatus === 'success' ? 'Text extracted' : 'Extract text'}
+                    {extractionStatus === 'extracting' ? 'Processing locally...' : extractionStatus === 'success' ? 'Processing complete' : 'Extract text + OCR'}
                   </button>
                 )}
               </div>
@@ -231,17 +237,18 @@ function App() {
                 <p className="card-kicker">LEARNING WORKSPACE</p>
                 <h2>Your space is ready</h2>
               </div>
-              <span className="status-pill"><span /> {extractedContent.length > 0 ? 'Text ready' : 'Empty'}</span>
+              <span className="status-pill"><span /> {extractedContent.length > 0 ? 'Content ready' : 'Empty'}</span>
             </div>
             {extractedContent.length > 0 ? (
               <div className="extracted-content">
                 {extractedContent.map((unit) => (
                   <section className={`content-unit ${!unit.has_text ? 'content-unit-empty' : ''}`} key={`${unit.reference_type}-${unit.reference_number}`}>
                     <div className="content-unit-heading">
-                      <span>{unit.reference_type === 'page' ? 'Page' : 'Slide'} {unit.reference_number}</span>
+                      <span>{unit.reference_type === 'page' ? 'Page' : unit.reference_type === 'slide' ? 'Slide' : 'Image'} {unit.reference_number}</span>
+                      <small>{unit.extraction_method.replace('+', ' + ')}</small>
                       {!unit.has_text && <small>No extractable text</small>}
                     </div>
-                    <p>{unit.text || 'This page or slide does not contain selectable text.'}</p>
+                    <p>{unit.text || 'No readable text was found after OCR.'}</p>
                   </section>
                 ))}
               </div>

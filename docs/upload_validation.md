@@ -2,7 +2,9 @@
 
 ## Existing flow
 
-The server supports PDF, PPT, PPTX, MP4, MOV, AVI, WebM and MKV.
+The server currently supports PDF, PPTX, PNG, JPG, and JPEG. Formats without a
+working processor are intentionally rejected rather than being stored in an
+unusable state.
 Upload still returns the same `stored_filename` shape as before.
 Size limits and temporary cleanup behavior remain intact.
 
@@ -12,10 +14,10 @@ Size limits and temporary cleanup behavior remain intact.
 - Reject obviously mismatched formats by file signature (HTTP 415).
 - Open PDFs with PyMuPDF and reject corrupt/password-protected PDFs.
 - Validate required PPTX ZIP parts and bound individual uncompressed members.
-- Apply lightweight container signature checks for supported video formats.
+- Decode images with Pillow, enforce a 40-megapixel limit, and require their
+  contents to match the PNG or JPEG extension.
 
-An upload is not a promise that the video is playable or that its
-captions/transcription exist. No scanning for viruses is performed.
+No scanning for viruses is performed.
 Production deployments must add sandboxing, malware scanning, storage
 quotas and authenticated file ownership.
 
@@ -26,4 +28,4 @@ python -m pip install -r backend/requirements-dev.txt
 python -m pytest backend/tests/test_upload_validation.py -q
 ```
 
-Tests validate valid and forged PDF/PPTX inputs and cleanup paths.
+Tests validate valid and forged PDF/PPTX/image inputs and cleanup paths.
