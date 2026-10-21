@@ -3,6 +3,9 @@
 Use this file as the permanent runbook for the `vm` branch. Commands below are
 for Windows PowerShell and assume the repository is at `F:\LearnflowAI`.
 
+For a hosted frontend that connects back to the API on your laptop, follow the
+[Cloudflare Pages setup](CLOUDFLARE_PAGES.md) after completing the local setup.
+
 ## 1. One-time AWS Bedrock setup
 
 1. Sign in to the [AWS Management Console](https://console.aws.amazon.com/).

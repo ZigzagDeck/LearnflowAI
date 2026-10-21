@@ -3,6 +3,9 @@
 For a repeatable one-time setup, daily startup sequence, and end-to-end test,
 follow [docs/START_HERE.md](docs/START_HERE.md).
 
+For Cloudflare Pages frontend hosting while keeping the API, worker, database,
+and uploaded files on your laptop, follow [docs/CLOUDFLARE_PAGES.md](docs/CLOUDFLARE_PAGES.md).
+
 For the complete project journey—including the starting point, failures,
 fixes, architecture decisions, current limits, and remaining production work—
 read [REPORT.md](REPORT.md).
