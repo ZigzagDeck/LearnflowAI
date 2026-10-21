@@ -10,13 +10,47 @@ const ACCEPTED_EXTENSIONS = ['.pdf', '.pptx', '.png', '.jpg', '.jpeg']
 const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
 const AUTH_STORAGE_KEY = 'learnflow.auth.token'
 const THEME_STORAGE_KEY = 'learnflow.theme'
+const PALETTE_STORAGE_KEY = 'learnflow.palette'
 
 type Theme = 'light' | 'dark'
+type Palette = 'olive' | 'terminal' | 'daylight' | 'botanical' | 'blueprint' | 'legal' | 'academy' | 'atelier' | 'neon'
+type WorkspaceView = 'materials' | 'chat' | 'summary' | 'quiz' | 'interview' | 'history'
+
+const PALETTES: Array<{ id: Palette; name: string; note: string; swatch: string }> = [
+  { id: 'olive', name: 'Olive Library', note: 'Calm and focused', swatch: '#747d43' },
+  { id: 'terminal', name: 'Midnight Terminal', note: 'Precise and technical', swatch: '#63d9aa' },
+  { id: 'daylight', name: 'Daylight Desk', note: 'Clean and minimal', swatch: '#6f7c72' },
+  { id: 'botanical', name: 'Botanical Notes', note: 'Soft and playful', swatch: '#7fa467' },
+  { id: 'blueprint', name: 'Blueprint Studio', note: 'Structured and analytical', swatch: '#477b9b' },
+  { id: 'legal', name: 'Legal Archive', note: 'Formal and editorial', swatch: '#8d6540' },
+  { id: 'academy', name: 'Classic Academy', note: 'Warm and scholarly', swatch: '#a65345' },
+  { id: 'atelier', name: 'Creative Atelier', note: 'Airy and expressive', swatch: '#668a83' },
+  { id: 'neon', name: 'Neon Quest', note: 'Energetic and immersive', swatch: '#a77cff' },
+]
+
+const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string }> = [
+  { id: 'materials', label: 'Materials' },
+  { id: 'chat', label: 'Ask AI' },
+  { id: 'summary', label: 'Summary' },
+  { id: 'quiz', label: 'Quiz' },
+  { id: 'interview', label: 'Interview' },
+  { id: 'history', label: 'History' },
+]
 
 function getInitialTheme(): Theme {
   const saved = window.localStorage.getItem(THEME_STORAGE_KEY)
   if (saved === 'light' || saved === 'dark') return saved
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function getInitialPalette(): Palette {
+  const saved = window.localStorage.getItem(PALETTE_STORAGE_KEY)
+  return PALETTES.some((item) => item.id === saved) ? saved as Palette : 'olive'
+}
+
+function getInitialView(): WorkspaceView {
+  const hash = window.location.hash.slice(1)
+  return WORKSPACE_VIEWS.some((item) => item.id === hash) ? hash as WorkspaceView : 'materials'
 }
 
 type UserProfile = {
@@ -169,6 +203,19 @@ function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }
   )
 }
 
+function PalettePicker({ palette, onChange }: { palette: Palette; onChange: (palette: Palette) => void }) {
+  const selected = PALETTES.find((item) => item.id === palette) || PALETTES[0]
+  return (
+    <label className="palette-picker" title={selected.note}>
+      <span className="palette-swatch" style={{ background: selected.swatch }} aria-hidden="true" />
+      <span className="sr-only">Visual theme</span>
+      <select value={palette} onChange={(event) => onChange(event.target.value as Palette)} aria-label="Visual theme">
+        {PALETTES.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+      </select>
+    </label>
+  )
+}
+
 function MarkdownAnswer({ children }: { children: string }) {
   return (
     <div className="markdown-answer">
@@ -253,10 +300,14 @@ function AuthScreen({
   onAuthenticated,
   theme,
   onToggleTheme,
+  palette,
+  onPaletteChange,
 }: {
   onAuthenticated: (token: string, user: UserProfile) => void
   theme: Theme
   onToggleTheme: () => void
+  palette: Palette
+  onPaletteChange: (palette: Palette) => void
 }) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
@@ -298,7 +349,10 @@ function AuthScreen({
 
   return (
     <main className="auth-shell">
-      <div className="auth-theme-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
+      <div className="auth-theme-toggle">
+        <PalettePicker palette={palette} onChange={onPaletteChange} />
+        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+      </div>
       <section className="auth-card">
         <div className="auth-logo-row">
           <BookLogo small />
@@ -395,6 +449,8 @@ function AuthScreen({
 
 function App() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
+  const [palette, setPalette] = useState<Palette>(getInitialPalette)
+  const [activeView, setActiveView] = useState<WorkspaceView>(getInitialView)
   const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [authReady, setAuthReady] = useState(() => !window.localStorage.getItem(AUTH_STORAGE_KEY))
@@ -471,11 +527,31 @@ function App() {
 
   const toggleTheme = () => setTheme((current) => current === 'light' ? 'dark' : 'light')
 
+  const navigateTo = useCallback((view: WorkspaceView) => {
+    setActiveView(view)
+    if (window.location.hash !== `#${view}`) {
+      window.history.pushState(null, '', `#${view}`)
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
+    document.documentElement.dataset.palette = palette
     document.documentElement.style.colorScheme = theme
     window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-  }, [theme])
+    window.localStorage.setItem(PALETTE_STORAGE_KEY, palette)
+  }, [palette, theme])
+
+  useEffect(() => {
+    const restoreView = () => setActiveView(getInitialView())
+    window.addEventListener('popstate', restoreView)
+    window.addEventListener('hashchange', restoreView)
+    return () => {
+      window.removeEventListener('popstate', restoreView)
+      window.removeEventListener('hashchange', restoreView)
+    }
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -1136,6 +1212,7 @@ function App() {
 
   const openInterviewSession = async (id: string) => {
     try {
+      navigateTo('interview')
       setInterviewBusy(true)
       setInterviewError('')
       const response = await apiFetch(`${API_BASE_URL}/interview/${id}`)
@@ -1178,6 +1255,7 @@ function App() {
 
   const openChatSession = async (sessionId: string) => {
     try {
+      navigateTo('chat')
       const response = await apiFetch(`${API_BASE_URL}/chat/history/${sessionId}`)
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'This chat could not be opened.')
@@ -1256,6 +1334,7 @@ function App() {
     referenceNumber?: number,
   ) => {
     if (material.status !== 'ready') return
+    navigateTo('materials')
     setHistoryMessage('')
     setUploadedResourceId(material.resource_id)
     setSelectedFile(null)
@@ -1336,24 +1415,38 @@ function App() {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
 
-  if (!currentUser) return <AuthScreen onAuthenticated={authenticated} theme={theme} onToggleTheme={toggleTheme} />
+  if (!currentUser) return (
+    <AuthScreen
+      onAuthenticated={authenticated}
+      theme={theme}
+      onToggleTheme={toggleTheme}
+      palette={palette}
+      onPaletteChange={setPalette}
+    />
+  )
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#workspace" aria-label="LearnFlow AI workspace">
+        <button className="brand" type="button" onClick={() => navigateTo('materials')} aria-label="Open materials workspace">
           <BookLogo />
           <span className="brand-copy"><strong>LearnFlow<span className="brand-accent"> AI</span></strong><small>Study workspace</small></span>
-        </a>
+        </button>
         <nav className="nav-links" aria-label="Main navigation">
-          <a href="#workspace">Materials</a>
-          <a href="#chat">Ask AI</a>
-          <a href="#summary">Summary</a>
-          <a href="#quiz">Quiz Practice</a>
-          <a href="#interview">Mock Interview</a>
-          <a href="#history">History</a>
+          {WORKSPACE_VIEWS.map((view) => (
+            <button
+              className={activeView === view.id ? 'active' : ''}
+              type="button"
+              aria-current={activeView === view.id ? 'page' : undefined}
+              onClick={() => navigateTo(view.id)}
+              key={view.id}
+            >
+              {view.label}
+            </button>
+          ))}
         </nav>
         <div className="profile-cluster">
+          <PalettePicker palette={palette} onChange={setPalette} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
           {currentUser.role === 'admin' && <button className="admin-link" type="button" onClick={() => void openAdmin()}>Admin</button>}
           <button className="export-button" type="button" disabled={exportBusy} onClick={() => void exportAccountData()}>{exportBusy ? 'Exporting…' : 'Export data'}</button>
@@ -1374,7 +1467,7 @@ function App() {
         </div>
       )}
 
-      <main>
+      <main className="page-main">
         {adminOpen && (
           <div className="admin-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false) }}>
           <section className="admin-panel" role="dialog" aria-modal="true" aria-label="Administrator usage panel">
@@ -1408,7 +1501,7 @@ function App() {
           </section>
           </div>
         )}
-        <section className="welcome-section">
+        <section className="welcome-section workspace-page" hidden={activeView !== 'materials'}>
           <div>
             <p className="eyebrow">YOUR PERSONAL LEARNING SPACE</p>
             <h1>Turn curiosity into <span>momentum.</span></h1>
@@ -1422,7 +1515,7 @@ function App() {
           </div>
         </section>
 
-        <section className="dashboard-grid" id="workspace">
+        <section className="dashboard-grid workspace-page" id="workspace" hidden={activeView !== 'materials'}>
           <article className={`upload-card ${isDragging ? 'is-dragging' : ''}`}>
             <div className="card-heading">
               <div className="icon-badge upload-icon" aria-hidden="true">↑</div>
@@ -1574,7 +1667,7 @@ function App() {
           </article>
         </section>
 
-        <section className="chat-section" id="chat">
+        <section className="chat-section workspace-page" id="chat" hidden={activeView !== 'chat'}>
           <div className="section-heading">
             <div><p className="eyebrow">GROUNDED STUDY HELP</p><h2>Ask about your materials</h2></div>
             <button className="secondary-button" type="button" onClick={startNewChat}>New chat</button>
@@ -1648,7 +1741,7 @@ function App() {
           </div>
         </section>
 
-        <section className="summary-section" id="summary">
+        <section className="summary-section workspace-page" id="summary" hidden={activeView !== 'summary'}>
           <div className="section-heading">
             <div><p className="eyebrow">GROUNDED OVERVIEW</p><h2>Summarize your materials</h2></div>
             {summaryResult && <button className="secondary-button" type="button" onClick={() => { setSummaryResult(null); setSummaryError('') }}>Clear summary</button>}
@@ -1690,7 +1783,7 @@ function App() {
           </div>
         </section>
 
-        <section className="quiz-section" id="quiz">
+        <section className="quiz-section workspace-page" id="quiz" hidden={activeView !== 'quiz'}>
           <div className="section-heading">
             <div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div>
             <button className="secondary-button" type="button" onClick={startNewQuiz}>New quiz</button>
@@ -1817,7 +1910,7 @@ function App() {
           </div>
         </section>
 
-        <section className="interview-section" id="interview">
+        <section className="interview-section workspace-page" id="interview" hidden={activeView !== 'interview'}>
           <div className="section-heading">
             <div>
               <p className="eyebrow">AI MOCK INTERVIEW & PREPARATION</p>
@@ -2201,7 +2294,7 @@ function App() {
           )}
         </section>
 
-        <section className="history-section" id="history">
+        <section className="history-section workspace-page" id="history" hidden={activeView !== 'history'}>
           <div className="section-heading">
             <div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div>
             <button className="secondary-button" type="button" onClick={() => void loadHistories()} disabled={historyBusy}>
@@ -2284,7 +2377,7 @@ function App() {
           <p className="history-footnote">Deleting a material removes its stored content, search index, and AI embeddings. Your data stays on this device only.</p>
         </section>
 
-        <section className="how-section" id="how-it-works">
+        <section className="how-section workspace-page" id="how-it-works" hidden={activeView !== 'materials'}>
           <p className="eyebrow">A SIMPLE START</p>
           <div className="steps">
             <div className="step">

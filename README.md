@@ -14,7 +14,8 @@ The application is designed for a small prototype deployment: the React frontend
 - Single-answer, multiple-answer, short-answer, and mixed quizzes
 - Source-grounded mock interviews with reports and feedback
 - User accounts, per-user data ownership, export, cleanup, and an admin usage view
-- Responsive warm light and dark themes
+- Nine named visual themes, each with accessible light and dark modes; Olive Library is the default
+- Responsive page-based workspaces for materials, chat, summaries, quizzes, interviews, and history
 
 ## Architecture
 
@@ -75,6 +76,8 @@ The main settings are:
 | Bedrock generation | `LEARNFLOW_BEDROCK_CHAT_ENABLED=true`, `AWS_REGION`, `AWS_BEARER_TOKEN_BEDROCK`, `LEARNFLOW_BEDROCK_MODEL_ID` |
 | Hosted frontend | `VITE_API_BASE_URL`, and the same origin in `LEARNFLOW_CORS_ORIGINS` |
 
+There are no hard-coded or default administrator credentials. An administrator account is created or updated when both `LEARNFLOW_ADMIN_EMAIL` and `LEARNFLOW_ADMIN_PASSWORD` are set in `.env` and the API is restarted. The admin link is only visible after signing in with that configured account.
+
 The checked-in [.env.example](.env.example) documents every supported option and contains placeholders only. Local OCR and local embedding fallback are disabled by default so testing cannot unexpectedly consume laptop memory.
 
 ## Start the application
@@ -108,9 +111,12 @@ Keep the worker running whenever materials are being processed. Uploading queues
 1. Register or sign in.
 2. Drop a supported file or paste a public YouTube URL.
 3. Wait until the material becomes **Ready**.
-4. Select one or more materials in chat, summary, quiz, or interview.
-5. Open citation chips to inspect the supporting page, slide, image, or video timestamp.
-6. Use **History & cleanup** to view extracted content or delete an incorrect ingestion.
+4. Move between the dedicated **Materials**, **Ask AI**, **Summary**, **Quiz**, **Interview**, and **History** pages from the workspace header.
+5. Select one or more materials in chat, summary, quiz, or interview.
+6. Open citation chips to inspect the supporting page, slide, image, or video timestamp.
+7. Use **History** to view extracted content or delete an incorrect ingestion.
+
+Use the theme picker beside the profile to choose **Olive Library**, **Midnight Terminal**, **Daylight Desk**, **Botanical Notes**, **Blueprint Studio**, **Legal Archive**, **Classic Academy**, **Creative Atelier**, or **Neon Quest**. The adjacent sun/moon control switches the selected theme between light and dark mode. Both choices are saved in the browser.
 
 YouTube ingestion uses existing manual or automatic captions; it does not download video or audio. Private, restricted, captionless, or host-blocked videos cannot currently be transcribed.
 
