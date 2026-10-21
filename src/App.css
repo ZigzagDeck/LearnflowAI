@@ -2351,18 +2351,20 @@ h1 span {
 
 .password-input-wrap input {
   width: 100%;
-  padding-right: 68px !important;
+  padding-right: 46px !important;
 }
 
 .password-toggle-btn {
   position: absolute;
   right: 12px;
-  padding: 5px 9px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--line);
   background: var(--cream);
   color: var(--olive-dark);
-  font-size: 11.5px;
-  font-weight: 600;
   cursor: pointer;
   border-radius: 6px;
   transition: background .15s;
@@ -2370,6 +2372,16 @@ h1 span {
 
 .password-toggle-btn:hover {
   background: var(--olive-soft);
+}
+
+.password-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.85;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .auth-card form label {
