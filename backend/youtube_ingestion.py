@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import re
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
 
 VIDEO_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{11}$")
 ALLOWED_HOSTS = {
@@ -27,6 +29,12 @@ class YouTubeTranscriptError(RuntimeError):
 class YouTubeReference:
     video_id: str
     canonical_url: str
+
+
+@dataclass(frozen=True)
+class YouTubeMetadata:
+    title: str
+    thumbnail_url: str
 
 
 def parse_youtube_url(value: str) -> YouTubeReference:
@@ -54,6 +62,37 @@ def parse_youtube_url(value: str) -> YouTubeReference:
         video_id=video_id,
         canonical_url=f"https://www.youtube.com/watch?v={video_id}",
     )
+
+
+def fetch_youtube_metadata(
+    reference: YouTubeReference, *, client: httpx.Client | None = None
+) -> YouTubeMetadata:
+    """Load public display metadata without making ingestion depend on it."""
+    fallback = YouTubeMetadata(
+        title=f"YouTube video {reference.video_id}",
+        thumbnail_url=f"https://i.ytimg.com/vi/{reference.video_id}/hqdefault.jpg",
+    )
+    owns_client = client is None
+    active_client = client or httpx.Client(timeout=8.0, follow_redirects=False)
+    try:
+        response = active_client.get(
+            "https://www.youtube.com/oembed",
+            params={"url": reference.canonical_url, "format": "json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        title = " ".join(str(payload.get("title") or "").split())[:300]
+        thumbnail = str(payload.get("thumbnail_url") or "").strip()
+        if not title:
+            return fallback
+        if not thumbnail.startswith("https://"):
+            thumbnail = fallback.thumbnail_url
+        return YouTubeMetadata(title=title, thumbnail_url=thumbnail)
+    except (httpx.HTTPError, ValueError, TypeError):
+        return fallback
+    finally:
+        if owns_client:
+            active_client.close()
 
 
 class YouTubeCaptionReader:

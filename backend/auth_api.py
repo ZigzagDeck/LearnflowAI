@@ -104,5 +104,5 @@ def admin_users(
     return {
         "period": datetime.now(UTC).strftime("%Y-%m"),
         "users": users,
-        "privacy": "Content, filenames, questions, answers, and full email addresses are excluded.",
+        "privacy": "Names, email addresses, content, filenames, questions, answers, and transcripts are excluded.",
     }

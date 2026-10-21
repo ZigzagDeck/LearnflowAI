@@ -59,14 +59,31 @@ class GroundedChatService:
             documents = await self.retriever.retrieve_documents(
                 request.question, request.allowed_source_ids
             )
-            video = []
+            video_groups: list[list[RetrievalHit]] = []
             if request.video_source_id is not None:
                 # ChatRequest guarantees playback_seconds exists with video_source_id.
-                video = await self.retriever.retrieve_video(
-                    request.question,
-                    request.video_source_id,
-                    request.playback_seconds,
+                video_groups.append(
+                    await self.retriever.retrieve_video(
+                        request.question,
+                        request.video_source_id,
+                        request.playback_seconds,
+                    )
                 )
+            for scope in request.video_scopes:
+                video_groups.append(
+                    await self.retriever.retrieve_video(
+                        request.question,
+                        scope.source_id,
+                        scope.playback_seconds,
+                    )
+                )
+            evidence_groups = [(documents, "document"), *[(group, "video") for group in video_groups]]
+            ranked_hits = [
+                (group[position], channel)
+                for position in range(max((len(group) for group, _ in evidence_groups), default=0))
+                for group, channel in evidence_groups
+                if position < len(group)
+            ]
         except Exception as exc:
             raise ChatUnavailableError("Evidence retrieval unavailable.") from exc
 
@@ -74,10 +91,7 @@ class GroundedChatService:
         evidence = []
         seen = set()
         # Never accept a video hit returned through the document interface, or vice versa.
-        for hit, channel in (
-            [(hit, "document") for hit in documents] +
-            [(hit, "video") for hit in video]
-        ):
+        for hit, channel in ranked_hits:
             citation = hit.citation
             if citation.source_id not in allowed:
                 continue
@@ -86,15 +100,22 @@ class GroundedChatService:
                     SourceType.PDF, SourceType.PPTX, SourceType.IMAGE
                 ):
                     continue
-            elif (
-                citation.source_type != SourceType.VIDEO
-                or citation.source_id != request.video_source_id
-                or citation.end_seconds is None
-                or request.playback_seconds is None
-                or citation.end_seconds > request.playback_seconds
-            ):
-                # Exclude full chunks overlapping the current playback cutoff.
-                continue
+            else:
+                playback_limits = {
+                    scope.source_id: scope.playback_seconds
+                    for scope in request.video_scopes
+                }
+                if request.video_source_id is not None and request.playback_seconds is not None:
+                    playback_limits[request.video_source_id] = request.playback_seconds
+                cutoff = playback_limits.get(citation.source_id)
+                if (
+                    citation.source_type != SourceType.VIDEO
+                    or citation.end_seconds is None
+                    or cutoff is None
+                    or citation.end_seconds > cutoff
+                ):
+                    # Exclude full chunks overlapping the current playback cutoff.
+                    continue
 
             key = (citation.source_id, citation.chunk_id)
             if key not in seen:

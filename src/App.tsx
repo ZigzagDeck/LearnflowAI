@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DragEvent, FormEvent } from 'react'
+import type { DragEvent, FormEvent, KeyboardEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -62,6 +64,7 @@ type MaterialRecord = {
   created_at: string
   updated_at: string
   source_url: string | null
+  thumbnail_url: string | null
   processing_job: { status: string; error: string | null } | null
 }
 
@@ -69,7 +72,7 @@ type ChatMessage = {
   message_id: string
   role: 'user' | 'assistant'
   content: string
-  citations: Array<{ source_id: string; source_type: string; page?: number; slide?: number; image?: number; start_seconds?: number; end_seconds?: number }>
+  citations: Array<{ source_id: string; source_type: string; chunk_id?: string; page?: number; slide?: number; image?: number; start_seconds?: number; end_seconds?: number }>
   created_at: string
 }
 
@@ -85,7 +88,9 @@ type ChatSession = {
 type QuizQuestion = {
   question_id: string
   question: string
+  question_type: 'single_answer' | 'multiple_answer' | 'short_answer'
   options: string[]
+  max_selections: number
 }
 
 type QuizAttempt = {
@@ -96,11 +101,42 @@ type QuizAttempt = {
 
 type QuizQuestionResult = {
   question_id: string
-  selected_option_index: number
-  correct_option_index: number
+  question_type: QuizQuestion['question_type']
+  selected_option_indices: number[]
+  correct_option_indices: number[]
+  submitted_text: string
+  accepted_answers: string[]
   correct: boolean
   explanation: string
   citations: ChatMessage['citations']
+}
+
+type QuizAnswerState = { indices: number[]; text: string }
+type VideoScopeState = Record<string, { duration: number; playback: number }>
+
+function BookLogo({ small = false }: { small?: boolean }) {
+  return (
+    <span className={`brand-mark${small ? ' small' : ''}`} aria-hidden="true">
+      <svg viewBox="0 0 32 32" role="img">
+        <path d="M5 7.5c4.3-.9 8 .1 11 2.5v15c-3-2.4-6.7-3.3-11-2.5z" />
+        <path d="M27 7.5c-4.3-.9-8 .1-11 2.5v15c3-2.4 6.7-3.3 11-2.5z" />
+        <path d="M16 10v15" />
+      </svg>
+    </span>
+  )
+}
+
+function MarkdownAnswer({ children }: { children: string }) {
+  return (
+    <div className="markdown-answer">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ children: label, ...props }) => <a {...props} target="_blank" rel="noreferrer">{label}</a>,
+        }}
+      >{children}</ReactMarkdown>
+    </div>
+  )
 }
 
 type QuizResult = {
@@ -168,7 +204,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <div className="brand-mark small" aria-hidden="true">⌑</div>
+        <BookLogo small />
         <p className="eyebrow">YOUR PRIVATE STUDY SPACE</p>
         <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
         <p>Sign in to keep materials, transcripts, conversations, and quizzes separated by account.</p>
@@ -193,7 +229,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
 function App() {
   const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
-  const [authReady, setAuthReady] = useState(false)
+  const [authReady, setAuthReady] = useState(() => !window.localStorage.getItem(AUTH_STORAGE_KEY))
   const [adminOpen, setAdminOpen] = useState(false)
   const [adminUsers, setAdminUsers] = useState<AdminUserMetric[]>([])
   const [adminBusy, setAdminBusy] = useState(false)
@@ -217,18 +253,18 @@ function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatQuestion, setChatQuestion] = useState('')
   const [chatSourceIds, setChatSourceIds] = useState<string[]>([])
-  const [chatVideoSourceId, setChatVideoSourceId] = useState('')
-  const [chatVideoDuration, setChatVideoDuration] = useState(0)
-  const [chatPlaybackSeconds, setChatPlaybackSeconds] = useState(0)
+  const [chatVideoScopes, setChatVideoScopes] = useState<VideoScopeState>({})
   const [chatBusy, setChatBusy] = useState(false)
   const [chatError, setChatError] = useState('')
+  const chatMessagesRef = useRef<HTMLDivElement>(null)
   const [quizSessionId, setQuizSessionId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
   const [quizSourceIds, setQuizSourceIds] = useState<string[]>([])
   const [quizCount, setQuizCount] = useState(5)
+  const [quizType, setQuizType] = useState<'single_answer' | 'multiple_answer' | 'short_answer' | 'mixed'>('mixed')
   const [quizBusy, setQuizBusy] = useState(false)
   const [quizError, setQuizError] = useState('')
   const [quiz, setQuiz] = useState<QuizAttempt | null>(null)
-  const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({})
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, QuizAnswerState>>({})
   const [quizResult, setQuizResult] = useState<QuizResult | null>(null)
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
@@ -247,8 +283,6 @@ function App() {
   useEffect(() => {
     let active = true
     if (!authToken) {
-      setCurrentUser(null)
-      setAuthReady(true)
       return () => { active = false }
     }
     const restoreSession = async () => {
@@ -271,7 +305,29 @@ function App() {
     return () => { active = false }
   }, [apiFetch, authToken])
 
+  const clearPrivateWorkspace = () => {
+    setMaterials([])
+    setChatSessions([])
+    setChatMessages([])
+    setChatSourceIds([])
+    setChatVideoScopes({})
+    setQuizSourceIds([])
+    setQuiz(null)
+    setQuizAnswers({})
+    setQuizResult(null)
+    setExtractedContent([])
+    setUploadedResourceId('')
+    setSelectedFile(null)
+    setYoutubeUrl('')
+    setActiveYoutubeUrl('')
+    setStatus('idle')
+    setExtractionStatus('idle')
+    setChatSessionId(crypto.randomUUID().replaceAll('-', ''))
+    setQuizSessionId(crypto.randomUUID().replaceAll('-', ''))
+  }
+
   const authenticated = (token: string, user: UserProfile) => {
+    clearPrivateWorkspace()
     window.localStorage.setItem(AUTH_STORAGE_KEY, token)
     setAuthToken(token)
     setCurrentUser(user)
@@ -281,6 +337,7 @@ function App() {
   const logout = async () => {
     try { await apiFetch(`${API_BASE_URL}/auth/logout`, { method: 'POST' }) } catch { /* Local sign-out still succeeds. */ }
     window.localStorage.removeItem(AUTH_STORAGE_KEY)
+    clearPrivateWorkspace()
     setAuthToken('')
     setCurrentUser(null)
     setAdminOpen(false)
@@ -342,40 +399,43 @@ function App() {
     return () => window.clearInterval(timer)
   }, [materials, loadHistories])
 
-  useEffect(() => {
-    if (!chatVideoSourceId) return
-    let active = true
-    const loadVideoDuration = async () => {
-      try {
-        const response = await apiFetch(`${API_BASE_URL}/materials/${chatVideoSourceId}/content`)
-        const payload = await response.json()
-        if (!response.ok) throw new Error(payload.detail || 'The video transcript could not be loaded.')
-        const duration = Math.max(0, ...(payload.content || []).map((unit: ExtractedUnit) => unit.end_seconds || 0))
-        if (active) {
-          setChatVideoDuration(duration)
-          setChatPlaybackSeconds(duration)
-        }
-      } catch (error) {
-        if (active) setChatError(error instanceof Error ? error.message : 'The video transcript could not be loaded.')
-      }
+  const loadVideoScope = useCallback(async (sourceId: string) => {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/materials/${sourceId}/content`)
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The video transcript could not be loaded.')
+      const duration = Math.max(0, ...(payload.content || []).map((unit: ExtractedUnit) => unit.end_seconds || 0))
+      setChatVideoScopes((current) => ({
+        ...current,
+        [sourceId]: current[sourceId] || { duration, playback: duration },
+      }))
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'The video transcript could not be loaded.')
+      setChatSourceIds((current) => current.filter((id) => id !== sourceId))
     }
-    void loadVideoDuration()
-    return () => { active = false }
-  }, [apiFetch, chatVideoSourceId])
+  }, [apiFetch])
 
   const updateChatSource = (material: MaterialRecord, checked: boolean) => {
-    setChatSourceIds((current) => {
-      if (!checked) return current.filter((id) => id !== material.resource_id)
-      if (material.source_type !== 'video') return [...new Set([...current, material.resource_id])]
-      const videoIds = new Set(materials.filter((item) => item.source_type === 'video').map((item) => item.resource_id))
-      return [...current.filter((id) => !videoIds.has(id)), material.resource_id]
-    })
+    if (checked && chatSourceIds.length >= 30) {
+      setChatError('You can use up to 30 materials in one chat.')
+      return
+    }
+    const selectedVideoCount = materials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id)).length
+    if (checked && material.source_type === 'video' && selectedVideoCount >= 10) {
+      setChatError('You can compare up to 10 videos in one chat.')
+      return
+    }
+    setChatError('')
+    setChatSourceIds((current) => checked
+      ? [...new Set([...current, material.resource_id])]
+      : current.filter((id) => id !== material.resource_id))
     if (material.source_type === 'video') {
-      setChatVideoSourceId(checked ? material.resource_id : '')
-      if (!checked) {
-        setChatVideoDuration(0)
-        setChatPlaybackSeconds(0)
-      }
+      if (checked) void loadVideoScope(material.resource_id)
+      else setChatVideoScopes((current) => {
+        const next = { ...current }
+        delete next[material.resource_id]
+        return next
+      })
     }
   }
 
@@ -563,6 +623,15 @@ function App() {
   const askChat = async () => {
     const question = chatQuestion.trim()
     if (!question || chatBusy || chatSourceIds.length === 0) return
+    const optimisticMessage: ChatMessage = {
+      message_id: crypto.randomUUID(),
+      role: 'user',
+      content: question,
+      citations: [],
+      created_at: new Date().toISOString(),
+    }
+    setChatMessages((current) => [...current, optimisticMessage])
+    setChatQuestion('')
     setChatBusy(true)
     setChatError('')
     try {
@@ -573,25 +642,36 @@ function App() {
           session_id: chatSessionId,
           question,
           allowed_source_ids: chatSourceIds,
-          ...(chatVideoSourceId ? {
-            video_source_id: chatVideoSourceId,
-            playback_seconds: chatPlaybackSeconds,
-          } : {}),
+          video_scopes: Object.entries(chatVideoScopes)
+            .filter(([sourceId]) => chatSourceIds.includes(sourceId))
+            .map(([sourceId, scope]) => ({ source_id: sourceId, playback_seconds: scope.playback })),
         }),
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The answer could not be generated.')
       setChatMessages((current) => [
         ...current,
-        { message_id: crypto.randomUUID(), role: 'user', content: question, citations: [], created_at: new Date().toISOString() },
         { message_id: crypto.randomUUID(), role: 'assistant', content: payload.answer, citations: payload.citations || [], created_at: new Date().toISOString() },
       ])
-      setChatQuestion('')
       void loadHistories()
     } catch (error) {
       setChatError(error instanceof Error ? error.message : 'The answer could not be generated.')
+      setChatMessages((current) => current.filter((item) => item.message_id !== optimisticMessage.message_id))
+      setChatQuestion(question)
     } finally {
       setChatBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const container = chatMessagesRef.current
+    if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+  }, [chatMessages, chatBusy])
+
+  const handleChatKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void askChat()
     }
   }
 
@@ -625,6 +705,7 @@ function App() {
           session_id: quizSessionId,
           allowed_source_ids: quizSourceIds,
           count: quizCount,
+          quiz_type: quizType,
         }),
       })
       const payload = await response.json()
@@ -638,7 +719,10 @@ function App() {
   }
 
   const submitQuiz = async () => {
-    if (!quiz || quizBusy || Object.keys(quizAnswers).length !== quiz.questions.length) return
+    if (!quiz || quizBusy || quiz.questions.some((question) => {
+      const answer = quizAnswers[question.question_id]
+      return question.question_type === 'short_answer' ? !answer?.text.trim() : !answer?.indices.length
+    })) return
     setQuizBusy(true)
     setQuizError('')
     try {
@@ -649,7 +733,8 @@ function App() {
           session_id: quiz.session_id,
           answers: quiz.questions.map((question) => ({
             question_id: question.question_id,
-            option_index: quizAnswers[question.question_id],
+            selected_option_indices: quizAnswers[question.question_id]?.indices || [],
+            text_answer: quizAnswers[question.question_id]?.text || '',
           })),
         }),
       })
@@ -673,12 +758,9 @@ function App() {
       const readyIds = new Set(materials.filter((item) => item.status === 'ready').map((item) => item.resource_id))
       const restoredIds = (payload.source_ids || []).filter((id: string) => readyIds.has(id))
       setChatSourceIds(restoredIds)
-      const restoredVideo = materials.find((item) => restoredIds.includes(item.resource_id) && item.source_type === 'video')
-      setChatVideoSourceId(restoredVideo?.resource_id || '')
-      if (!restoredVideo) {
-        setChatVideoDuration(0)
-        setChatPlaybackSeconds(0)
-      }
+      const restoredVideos = materials.filter((item) => restoredIds.includes(item.resource_id) && item.source_type === 'video')
+      setChatVideoScopes({})
+      restoredVideos.forEach((item) => void loadVideoScope(item.resource_id))
       setChatError('')
       document.getElementById('chat')?.scrollIntoView({ behavior: 'smooth' })
     } catch (error) {
@@ -709,11 +791,11 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
       setQuizSourceIds((current) => current.filter((id) => id !== material.resource_id))
-      if (chatVideoSourceId === material.resource_id) {
-        setChatVideoSourceId('')
-        setChatVideoDuration(0)
-        setChatPlaybackSeconds(0)
-      }
+      setChatVideoScopes((current) => {
+        const next = { ...current }
+        delete next[material.resource_id]
+        return next
+      })
       if (uploadedResourceId === material.resource_id) {
         setUploadedResourceId('')
         setExtractedContent([])
@@ -739,6 +821,43 @@ function App() {
     }
   }
 
+  const openMaterial = async (material: MaterialRecord) => {
+    if (material.status !== 'ready') return
+    setHistoryMessage('')
+    setUploadedResourceId(material.resource_id)
+    setActiveYoutubeUrl(material.source_url || '')
+    setExtractionStatus('processing')
+    setExtractionMessage(material.source_type === 'video' ? 'Opening saved transcript…' : 'Opening saved extracted content…')
+    try {
+      await loadExtractedContent(material.resource_id)
+      window.setTimeout(() => document.getElementById('workspace-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+    } catch (error) {
+      setExtractionStatus('error')
+      setExtractionMessage(error instanceof Error ? error.message : 'Saved content could not be opened.')
+    }
+  }
+
+  const renderCitations = (citations: ChatMessage['citations']) => (
+    <div className="citation-list" aria-label="Sources">
+      <span className="citation-label">Sources</span>
+      {citations.map((citation, index) => {
+        const material = materials.find((item) => item.resource_id === citation.source_id)
+        const sourceName = material?.original_filename || 'Material'
+        const location = citation.page ? `Page ${citation.page}`
+          : citation.slide ? `Slide ${citation.slide}`
+            : citation.image ? `Image ${citation.image}`
+              : citation.start_seconds !== undefined
+                ? `${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : 'Source'
+        const label = `${sourceName} · ${location}`
+        if (material?.source_type === 'video' && material.source_url) {
+          const joiner = material.source_url.includes('?') ? '&' : '?'
+          return <a className="citation-chip" key={`${citation.chunk_id || index}`} href={`${material.source_url}${joiner}t=${Math.floor(citation.start_seconds || 0)}s`} target="_blank" rel="noreferrer">▶ {label}</a>
+        }
+        return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => material && void openMaterial(material)}>↗ {label}</button>
+      })}
+    </div>
+  )
+
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     setIsDragging(false)
@@ -763,6 +882,12 @@ function App() {
     }
   }
 
+  const quizAnsweredCount = quiz?.questions.filter((question) => {
+    const answer = quizAnswers[question.question_id]
+    return question.question_type === 'short_answer' ? Boolean(answer?.text.trim()) : Boolean(answer?.indices.length)
+  }).length || 0
+  const quizComplete = Boolean(quiz && quizAnsweredCount === quiz.questions.length)
+
   if (!authReady) {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
@@ -771,36 +896,30 @@ function App() {
 
   return (
     <div className="app-shell">
-      <nav className="topbar" aria-label="Main navigation">
-        <a className="brand" href="/">
-          <span className="brand-mark" aria-hidden="true">L</span>
+      <header className="topbar">
+        <a className="brand" href="#workspace" aria-label="LearnFlow AI workspace">
+          <BookLogo />
           <span>LearnFlow<span className="brand-accent"> AI</span></span>
         </a>
-        <div className="nav-links">
-          <a className="active" href="#workspace">Workspace</a>
-          <a href="#chat">Study chat</a>
-          <a href="#quiz">Quiz</a>
-          <a href="#history">History</a>
-          <a href="#how-it-works">How it works</a>
-        </div>
         <div className="profile-cluster">
           {currentUser.role === 'admin' && <button className="admin-link" type="button" onClick={() => void openAdmin()}>Admin</button>}
           <div className="profile-button" aria-label="Signed-in profile">
             <span className="profile-avatar">{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
-            <span className="profile-name">{currentUser.display_name}</span>
+            <span className="profile-copy"><strong>{currentUser.display_name}</strong><small>{currentUser.email}</small></span>
           </div>
           <button className="signout-button" type="button" onClick={() => void logout()}>Sign out</button>
         </div>
-      </nav>
+      </header>
 
       <main>
         {adminOpen && (
-          <section className="admin-panel" aria-label="Administrator usage panel">
+          <div className="admin-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false) }}>
+          <section className="admin-panel" role="dialog" aria-modal="true" aria-label="Administrator usage panel">
             <div className="section-heading">
               <div><p className="eyebrow">PRIVACY-SAFE OPERATIONS</p><h2>Admin overview</h2></div>
               <button className="secondary-button" type="button" onClick={() => setAdminOpen(false)}>Close</button>
             </div>
-            <p className="admin-privacy">Only aggregate activity is shown. Material names, content, questions, answers, transcripts, and full email addresses stay private.</p>
+            <p className="admin-privacy">Only anonymized account labels and aggregate activity are shown. Names, email addresses, material names, content, questions, answers, and transcripts stay private.</p>
             {adminError && <p className="history-alert" role="alert">{adminError}</p>}
             {adminBusy ? <p>Loading account usage…</p> : (
               <div className="admin-users">
@@ -810,8 +929,10 @@ function App() {
                     <dl>
                       <div><dt>Materials</dt><dd>{item.material_count}</dd></div>
                       <div><dt>Storage</dt><dd>{formatFileSize(item.storage_bytes)}</dd></div>
-                      <div><dt>Input tokens</dt><dd>{item.input_tokens.toLocaleString()}</dd></div>
-                      <div><dt>Output tokens</dt><dd>{item.output_tokens.toLocaleString()}</dd></div>
+                      <div><dt>Est. input tokens</dt><dd>{item.input_tokens.toLocaleString()}</dd></div>
+                      <div><dt>Est. output tokens</dt><dd>{item.output_tokens.toLocaleString()}</dd></div>
+                      <div><dt>Chat requests</dt><dd>{item.chat_requests.toLocaleString()}</dd></div>
+                      <div><dt>Quiz requests</dt><dd>{item.quiz_requests.toLocaleString()}</dd></div>
                       <div><dt>Active time</dt><dd>{Math.round(item.active_seconds / 60)} min</dd></div>
                     </dl>
                     <p>Explored domains: {item.explored_domains.length ? item.explored_domains.map((domain) => `${domain.label} (${domain.count})`).join(', ') : 'None yet'}</p>
@@ -821,6 +942,7 @@ function App() {
               </div>
             )}
           </section>
+          </div>
         )}
         <section className="welcome-section">
           <div>
@@ -830,12 +952,9 @@ function App() {
               Bring your learning materials together and build a clearer path to understanding.
             </p>
           </div>
-          <div className="welcome-orbit" aria-hidden="true">
-            <div className="orbit orbit-one" />
-            <div className="orbit orbit-two" />
-            <div className="orbit-core">✦</div>
-            <span className="orbit-dot dot-one">✦</span>
-            <span className="orbit-dot dot-two">•</span>
+          <div className="welcome-book" aria-hidden="true">
+            <BookLogo />
+            <span>Read. Ask. Practice.</span>
           </div>
         </section>
 
@@ -853,6 +972,11 @@ function App() {
             </p>
             <div
               className="drop-zone"
+              role="button"
+              tabIndex={0}
+              aria-label="Choose or drop a learning material"
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') fileInputRef.current?.click() }}
               onDragEnter={(event) => { event.preventDefault(); setIsDragging(true) }}
               onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' }}
               onDragLeave={(event) => {
@@ -871,10 +995,9 @@ function App() {
                   event.target.value = ''
                 }}
               />
-              <button className="upload-button" type="button" onClick={() => fileInputRef.current?.click()}>
-                <span aria-hidden="true">＋</span> Choose a file
-              </button>
-              <p className="drop-hint">or drag and drop it here</p>
+              <div className="drop-icon" aria-hidden="true">⇧</div>
+              <strong>{isDragging ? 'Release to add your file' : 'Drop a file anywhere in this area'}</strong>
+              <p className="drop-hint">or click to browse</p>
             </div>
             <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
             {ocrRuntime && (
@@ -935,7 +1058,7 @@ function App() {
               <div className="selected-file">
                 <div className="file-summary">
                   <span className="file-type-badge">YT</span>
-                  <div><strong>YouTube video</strong><span title={activeYoutubeUrl}>{activeYoutubeUrl}</span></div>
+                  <div><strong>{materials.find((item) => item.resource_id === uploadedResourceId)?.original_filename || 'YouTube video'}</strong><span>Saved YouTube source</span></div>
                 </div>
                 {(extractionStatus === 'queued' || extractionStatus === 'processing') && (
                   <div className="progress-track"><div style={{ width: `${processingProgress}%` }} /></div>
@@ -952,7 +1075,7 @@ function App() {
             {extractionMessage && <p className={`upload-message ${extractionStatus}`}>{extractionMessage}</p>}
           </article>
 
-          <article className="workspace-card">
+          <article className="workspace-card" id="workspace-content">
             <div className="workspace-header">
               <div>
                 <p className="card-kicker">LEARNING WORKSPACE</p>
@@ -1004,62 +1127,57 @@ function App() {
                       checked={chatSourceIds.includes(material.resource_id)}
                       onChange={(event) => updateChatSource(material, event.target.checked)}
                     />
-                    <span title={material.source_url || material.original_filename}>
-                      {material.source_type === 'video' ? 'YouTube · ' : ''}{material.original_filename}
-                    </span>
+                    {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
+                    <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                   </label>
                 ))
               ) : <p className="history-muted">Finish processing a material to use it in chat.</p>}
-              {chatVideoSourceId && (
-                <div className="video-chat-scope">
-                  <label htmlFor="video-playback-position">
-                    Use transcript through <strong>{formatTimestamp(chatPlaybackSeconds)}</strong>
-                  </label>
-                  <input
-                    id="video-playback-position"
-                    type="range"
-                    min="0"
-                    max={Math.max(1, Math.ceil(chatVideoDuration))}
-                    value={Math.min(chatPlaybackSeconds, Math.max(1, Math.ceil(chatVideoDuration)))}
-                    onChange={(event) => setChatPlaybackSeconds(Number(event.target.value))}
-                    disabled={chatVideoDuration <= 0}
-                  />
-                  <small>Defaults to the full processed video. Move left to limit answers to what you have watched.</small>
-                </div>
-              )}
+              {Object.entries(chatVideoScopes).filter(([sourceId]) => chatSourceIds.includes(sourceId)).map(([sourceId, scope]) => {
+                const video = materials.find((item) => item.resource_id === sourceId)
+                return (
+                  <div className="video-chat-scope" key={sourceId}>
+                    <label htmlFor={`video-playback-${sourceId}`}>
+                      <span>{video?.original_filename || 'Video'}</span>
+                      Through <strong>{formatTimestamp(scope.playback)}</strong>
+                    </label>
+                    <input
+                      id={`video-playback-${sourceId}`}
+                      type="range"
+                      min="0"
+                      max={Math.max(1, Math.ceil(scope.duration))}
+                      value={Math.min(scope.playback, Math.max(1, Math.ceil(scope.duration)))}
+                      onChange={(event) => setChatVideoScopes((current) => ({ ...current, [sourceId]: { ...scope, playback: Number(event.target.value) } }))}
+                      disabled={scope.duration <= 0}
+                    />
+                  </div>
+                )
+              })}
+              {Object.keys(chatVideoScopes).length > 0 && <small className="scope-help">Each video defaults to its full transcript. Move its slider left to limit context to what you watched.</small>}
             </aside>
             <div className="chat-panel">
-              <div className="chat-messages" aria-live="polite">
+              <div className="chat-messages" aria-live="polite" aria-busy={chatBusy} ref={chatMessagesRef}>
                 {chatMessages.length ? chatMessages.map((item) => (
                   <article className={`chat-message ${item.role}`} key={item.message_id}>
                     <strong>{item.role === 'user' ? 'You' : 'LearnFlow AI'}</strong>
-                    <p>{item.content}</p>
-                    {item.citations.length > 0 && <small>
-                      Sources: {item.citations.map((citation, index) => {
-                        const sourceName = materials.find((material) => material.resource_id === citation.source_id)?.original_filename || 'Material'
-                        const location = citation.page ? ` · page ${citation.page}`
-                          : citation.slide ? ` · slide ${citation.slide}`
-                            : citation.image ? ` · image ${citation.image}`
-                              : citation.start_seconds !== undefined
-                                ? ` · ${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : ''
-                        return `${index ? '; ' : ''}${sourceName}${location}`
-                      }).join('')}
-                    </small>}
+                    {item.role === 'assistant' ? <MarkdownAnswer>{item.content}</MarkdownAnswer> : <p>{item.content}</p>}
+                    {item.citations.length > 0 && renderCitations(item.citations)}
                   </article>
                 )) : (
                   <div className="chat-empty"><span aria-hidden="true">✦</span><h3>Start with a question</h3><p>Answers use only the ready materials you select.</p></div>
                 )}
+                {chatBusy && <article className="chat-message assistant thinking-message"><strong>LearnFlow AI</strong><div className="thinking-dots" aria-label="Reading selected materials and composing an answer"><span /><span /><span /></div><small>Reading your selected sources and checking citations…</small></article>}
               </div>
               {chatError && <p className="history-alert" role="alert">{chatError}</p>}
               <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void askChat() }}>
                 <textarea
                   value={chatQuestion}
                   onChange={(event) => setChatQuestion(event.target.value)}
+                  onKeyDown={handleChatKeyDown}
                   placeholder="Ask a question about your selected materials…"
                   aria-label="Question for LearnFlow AI"
                   maxLength={4000}
                 />
-                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim() || (Boolean(chatVideoSourceId) && chatVideoDuration <= 0)}>
+                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim() || Object.entries(chatVideoScopes).some(([sourceId, scope]) => chatSourceIds.includes(sourceId) && scope.duration <= 0)}>
                   {chatBusy ? 'Thinking…' : 'Ask'}
                 </button>
               </form>
@@ -1086,19 +1204,20 @@ function App() {
                         ? [...new Set([...current, material.resource_id])].slice(0, 12)
                         : current.filter((id) => id !== material.resource_id))}
                     />
-                    <span title={material.source_url || material.original_filename}>
-                      {material.source_type === 'video' ? 'YouTube · ' : ''}{material.original_filename}
-                    </span>
+                    {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
+                    <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                   </label>
                 ))
               ) : <p className="history-muted">Finish processing a material to generate a quiz.</p>}
               <div className="quiz-controls">
                 <label htmlFor="quiz-count">Questions</label>
-                <select id="quiz-count" value={quizCount} onChange={(event) => setQuizCount(Number(event.target.value))} disabled={quizBusy}>
-                  <option value={3}>3</option>
-                  <option value={5}>5</option>
-                  <option value={8}>8</option>
-                  <option value={10}>10</option>
+                <input id="quiz-count" type="number" min="1" max="20" value={quizCount} onChange={(event) => setQuizCount(Math.min(20, Math.max(1, Number(event.target.value) || 1)))} disabled={quizBusy} />
+                <label htmlFor="quiz-type">Answer type</label>
+                <select id="quiz-type" value={quizType} onChange={(event) => setQuizType(event.target.value as typeof quizType)} disabled={quizBusy}>
+                  <option value="mixed">Mixed types</option>
+                  <option value="single_answer">Single answer</option>
+                  <option value="multiple_answer">Multiple answers</option>
+                  <option value="short_answer">Short answer</option>
                 </select>
                 <button type="button" onClick={() => void generateQuiz()} disabled={quizBusy || quizSourceIds.length === 0}>
                   {quizBusy && !quiz ? 'Generating…' : 'Generate quiz'}
@@ -1123,39 +1242,52 @@ function App() {
                         <article className="quiz-question" key={question.question_id}>
                           <p className="quiz-number">QUESTION {questionIndex + 1}</p>
                           <h3>{question.question}</h3>
-                          <div className="quiz-options">
-                            {question.options.map((option, optionIndex) => {
-                              const optionState = result
-                                ? optionIndex === result.correct_option_index ? 'correct'
-                                  : optionIndex === result.selected_option_index ? 'incorrect' : ''
-                                : ''
-                              return (
-                                <label className={`quiz-option ${optionState}`} key={`${question.question_id}-${optionIndex}`}>
-                                  <input
-                                    type="radio"
-                                    name={question.question_id}
-                                    checked={quizAnswers[question.question_id] === optionIndex}
-                                    onChange={() => setQuizAnswers((current) => ({ ...current, [question.question_id]: optionIndex }))}
-                                    disabled={Boolean(quizResult)}
-                                  />
-                                  <span>{option}</span>
-                                </label>
-                              )
-                            })}
-                          </div>
+                          <p className="question-type">{question.question_type === 'single_answer' ? 'Choose one' : question.question_type === 'multiple_answer' ? `Choose all that apply${question.max_selections ? ` · up to ${question.max_selections}` : ''}` : 'Write a short answer'}</p>
+                          {question.question_type === 'short_answer' ? (
+                            <textarea
+                              className="short-answer"
+                              value={quizAnswers[question.question_id]?.text || ''}
+                              onChange={(event) => setQuizAnswers((current) => ({ ...current, [question.question_id]: { indices: [], text: event.target.value } }))}
+                              placeholder="Type your answer…"
+                              maxLength={2000}
+                              disabled={Boolean(quizResult)}
+                            />
+                          ) : (
+                            <div className="quiz-options">
+                              {question.options.map((option, optionIndex) => {
+                                const selected = quizAnswers[question.question_id]?.indices.includes(optionIndex) || false
+                                const optionState = result
+                                  ? result.correct_option_indices.includes(optionIndex) ? 'correct'
+                                    : result.selected_option_indices.includes(optionIndex) ? 'incorrect' : ''
+                                  : ''
+                                return (
+                                  <label className={`quiz-option ${optionState}`} key={`${question.question_id}-${optionIndex}`}>
+                                    <input
+                                      type={question.question_type === 'single_answer' ? 'radio' : 'checkbox'}
+                                      name={question.question_id}
+                                      checked={selected}
+                                      onChange={() => setQuizAnswers((current) => {
+                                        const previous = current[question.question_id]?.indices || []
+                                        const indices = question.question_type === 'single_answer'
+                                          ? [optionIndex]
+                                          : previous.includes(optionIndex) ? previous.filter((index) => index !== optionIndex)
+                                            : previous.length >= question.max_selections ? previous : [...previous, optionIndex]
+                                        return { ...current, [question.question_id]: { indices, text: '' } }
+                                      })}
+                                      disabled={Boolean(quizResult)}
+                                    />
+                                    <span>{option}</span>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          )}
                           {result && (
                             <div className={`quiz-explanation ${result.correct ? 'correct' : 'incorrect'}`}>
                               <strong>{result.correct ? 'Correct' : 'Not quite'}</strong>
                               <p>{result.explanation}</p>
-                              <small>Sources: {result.citations.map((citation, citationIndex) => {
-                                const sourceName = materials.find((material) => material.resource_id === citation.source_id)?.original_filename || 'Material'
-                                const location = citation.page ? ` · page ${citation.page}`
-                                  : citation.slide ? ` · slide ${citation.slide}`
-                                    : citation.image ? ` · image ${citation.image}`
-                                      : citation.start_seconds !== undefined
-                                        ? ` · ${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : ''
-                                return `${citationIndex ? '; ' : ''}${sourceName}${location}`
-                              }).join('')}</small>
+                              {!result.correct && result.question_type === 'short_answer' && result.accepted_answers.length > 0 && <p className="accepted-answer">Accepted answer: {result.accepted_answers[0]}</p>}
+                              {renderCitations(result.citations)}
                             </div>
                           )}
                         </article>
@@ -1167,9 +1299,9 @@ function App() {
                       className="quiz-submit"
                       type="button"
                       onClick={() => void submitQuiz()}
-                      disabled={quizBusy || Object.keys(quizAnswers).length !== quiz.questions.length}
+                      disabled={quizBusy || !quizComplete}
                     >
-                      {quizBusy ? 'Scoring…' : `Submit ${Object.keys(quizAnswers).length}/${quiz.questions.length} answered`}
+                      {quizBusy ? 'Scoring…' : `Submit ${quizAnsweredCount}/${quiz.questions.length} answered`}
                     </button>
                   )}
                 </>
@@ -1202,12 +1334,14 @@ function App() {
                 const processingError = material.error || material.processing_job?.error
                 return (
                   <article className="history-card" key={material.resource_id}>
+                    {material.thumbnail_url && <img className="history-thumbnail" src={material.thumbnail_url} alt="" />}
                     <div className="history-card-main">
                       <div className="history-title-row"><h3 title={material.original_filename}>{material.original_filename}</h3><span className={`history-status ${material.status}`}>{material.status}</span></div>
-                      <p>{material.source_type === 'video' ? material.source_url || 'YouTube video' : material.source_type.toUpperCase()} · Added {formatDate(material.created_at)}</p>
+                      <p>{material.source_type === 'video' ? 'YouTube transcript' : material.source_type.toUpperCase()} · Added {formatDate(material.created_at)}</p>
                       {processingError && <p className="history-error">Processing error: {processingError}</p>}
                     </div>
                     <div className="history-actions">
+                      {material.status === 'ready' && <button className="secondary-button" type="button" onClick={() => void openMaterial(material)}>{material.source_type === 'video' ? 'View transcript' : 'View content'}</button>}
                       {material.status === 'failed' && <button className="secondary-button" type="button" onClick={() => void retryHistoryMaterial(material)}>Retry</button>}
                       <button className="delete-button" type="button" disabled={material.status === 'processing'} onClick={() => void deleteMaterial(material)}>
                         {material.status === 'processing' ? 'Processing…' : 'Delete data'}

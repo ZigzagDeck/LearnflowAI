@@ -1,8 +1,10 @@
 """Grounded quiz generation with server-side answer keys and scoring."""
 
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 import json
-from typing import Protocol
+import re
+from typing import Literal, Protocol
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -36,29 +38,72 @@ class QuizAttemptError(ValueError):
 
 
 class QuizModelProvider(Protocol):
-    async def generate_quiz(self, evidence: list[str], count: int) -> str: ...
+    async def generate_quiz(
+        self, evidence: list[str], count: int, quiz_type: str
+    ) -> str: ...
 
 
 class _GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=1, max_length=1_000)
-    options: list[str] = Field(min_length=4, max_length=4)
-    correct_option_index: int = Field(ge=0, le=3)
+    question_type: Literal["single_answer", "multiple_answer", "short_answer"]
+    options: list[str] = Field(default_factory=list, max_length=6)
+    correct_option_indices: list[int] = Field(default_factory=list, max_length=6)
+    accepted_answers: list[str] = Field(default_factory=list, max_length=8)
     explanation: str = Field(min_length=1, max_length=2_000)
     evidence_indices: list[int] = Field(min_length=1, max_length=4)
 
     @model_validator(mode="after")
     def validate_options(self):
         normalized = [option.strip().casefold() for option in self.options]
-        if any(not option for option in normalized) or len(set(normalized)) != 4:
-            raise ValueError("Quiz options must be non-empty and distinct.")
+        if self.question_type in {"single_answer", "multiple_answer"}:
+            if not 3 <= len(self.options) <= 6:
+                raise ValueError("Choice questions need between three and six options.")
+            if any(not option for option in normalized) or len(set(normalized)) != len(normalized):
+                raise ValueError("Quiz options must be non-empty and distinct.")
+            indices = list(dict.fromkeys(self.correct_option_indices))
+            if not indices or any(index < 0 or index >= len(self.options) for index in indices):
+                raise ValueError("Correct option indices are invalid.")
+            if self.question_type == "single_answer" and len(indices) != 1:
+                raise ValueError("Single-answer questions need one correct option.")
+            if self.question_type == "multiple_answer" and len(indices) < 2:
+                raise ValueError("Multiple-answer questions need at least two correct options.")
+            self.correct_option_indices = indices
+            self.accepted_answers = []
+        else:
+            if self.options or self.correct_option_indices:
+                raise ValueError("Short-answer questions cannot include options.")
+            answers = [" ".join(answer.split()) for answer in self.accepted_answers]
+            answers = list(dict.fromkeys(answer for answer in answers if answer))
+            if not answers:
+                raise ValueError("Short-answer questions need accepted answers.")
+            self.accepted_answers = answers
         return self
 
 
 class _GeneratedQuiz(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    questions: list[_GeneratedQuestion] = Field(min_length=1, max_length=10)
+    questions: list[_GeneratedQuestion] = Field(min_length=1, max_length=20)
+
+
+def _normalize_short_answer(value: str) -> str:
+    return " ".join(re.findall(r"[\w]+", value.casefold(), flags=re.UNICODE))
+
+
+def _short_answer_matches(submitted: str, accepted: list[str]) -> bool:
+    candidate = _normalize_short_answer(submitted)
+    if not candidate:
+        return False
+    for answer in accepted:
+        expected = _normalize_short_answer(answer)
+        if candidate == expected:
+            return True
+        if min(len(candidate), len(expected)) >= 5 and SequenceMatcher(
+            None, candidate, expected
+        ).ratio() >= 0.88:
+            return True
+    return False
 
 
 def _citation_for_chunk(chunk: NormalizedChunk) -> Citation:
@@ -151,7 +196,7 @@ class GroundedQuizService:
 
         try:
             raw = await self.provider.generate_quiz(
-                [chunk.text for chunk in evidence], request.count
+                [chunk.text for chunk in evidence], request.count, request.quiz_type
             )
         except ProviderError as exc:
             raise QuizUnavailableError("Quiz generation is unavailable.") from exc
@@ -175,15 +220,19 @@ class GroundedQuizService:
                 QuizQuestion(
                     question_id=question_id,
                     question=item.question.strip(),
+                    question_type=item.question_type,
                     options=options,
+                    max_selections=len(item.correct_option_indices),
                 )
             )
             stored_questions.append(
                 {
                     "question_id": question_id,
                     "question": item.question.strip(),
+                    "question_type": item.question_type,
                     "options": options,
-                    "correct_option_index": item.correct_option_index,
+                    "correct_option_indices": item.correct_option_indices,
+                    "accepted_answers": item.accepted_answers,
                     "explanation": item.explanation.strip(),
                     "citations": [citation.model_dump(mode="json") for citation in citations],
                 }
@@ -218,7 +267,7 @@ class GroundedQuizService:
         if attempt.status != "ready":
             raise QuizAttemptError("This quiz has already been submitted.")
 
-        answers = {answer.question_id: answer.option_index for answer in request.answers}
+        answers = {answer.question_id: answer for answer in request.answers}
         if len(answers) != len(request.answers):
             raise QuizAttemptError("Each quiz question must be answered once.")
         expected_ids = {str(question["question_id"]) for question in attempt.questions}
@@ -232,11 +281,27 @@ class GroundedQuizService:
             options = question.get("options")
             if not isinstance(options, list):
                 raise QuizUnavailableError("Stored quiz data is invalid.")
-            selected = answers[question_id]
-            correct_index = int(question["correct_option_index"])
-            if selected >= len(options):
+            answer = answers[question_id]
+            question_type = str(question.get("question_type"))
+            selected = list(dict.fromkeys(answer.selected_option_indices))
+            if any(index < 0 or index >= len(options) for index in selected):
                 raise QuizAttemptError("A selected answer is outside its option list.")
-            correct = selected == correct_index
+            correct_indices = [int(value) for value in question.get("correct_option_indices", [])]
+            accepted_answers = [str(value) for value in question.get("accepted_answers", [])]
+            if question_type == "short_answer":
+                if selected or not answer.text_answer.strip():
+                    raise QuizAttemptError("Every short-answer question needs a written response.")
+                correct = _short_answer_matches(answer.text_answer, accepted_answers)
+            elif question_type == "single_answer":
+                if len(selected) != 1:
+                    raise QuizAttemptError("Select one answer for every single-answer question.")
+                correct = selected == correct_indices
+            elif question_type == "multiple_answer":
+                if not selected:
+                    raise QuizAttemptError("Select answers for every multiple-answer question.")
+                correct = set(selected) == set(correct_indices)
+            else:
+                raise QuizUnavailableError("Stored quiz type is invalid.")
             score += int(correct)
             try:
                 citations = [Citation.model_validate(item) for item in question["citations"]]
@@ -245,8 +310,11 @@ class GroundedQuizService:
             results.append(
                 QuizQuestionResult(
                     question_id=question_id,
-                    selected_option_index=selected,
-                    correct_option_index=correct_index,
+                    question_type=question_type,
+                    selected_option_indices=selected,
+                    correct_option_indices=correct_indices,
+                    submitted_text=answer.text_answer.strip(),
+                    accepted_answers=accepted_answers,
                     correct=correct,
                     explanation=str(question["explanation"]),
                     citations=citations,

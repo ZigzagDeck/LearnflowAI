@@ -18,11 +18,12 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Deterministic semantic-boundary chunks that preserve exact page/slide/image citations
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
 - Guarded Jina AI embeddings with SQLite lexical/dense rank fusion
-- Grounded Bedrock chat and server-scored multiple-choice quizzes with citations
+- Grounded Bedrock chat with Markdown, actionable citations, and multi-video playback scopes
+- Server-scored single-answer, multiple-answer, short-answer, and mixed quizzes with citations
 - Salted-password accounts, revocable sessions, per-user material access, and a privacy-safe admin usage view
-- A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
+- A responsive warm-olive workspace with drag-and-drop ingestion, saved transcript viewing, and YouTube thumbnails
 
-YouTube caption ingestion, citation-safe local RAG, document OCR, opt-in Amazon Bedrock grounded chat, and grounded quizzes are implemented. Summaries, uploaded-video transcription, and production authentication remain incomplete.
+YouTube caption ingestion, citation-safe local RAG, document OCR, account-isolated Bedrock chat, grounded quizzes, and local password authentication are implemented. Uploaded-video transcription, password recovery/email verification, and hardened internet-scale deployment controls remain future production work.
 
 ## Folder guide
 
@@ -66,7 +67,7 @@ Install these separately if they are not already installed: Node.js 20+, Python 
 Run these commands from the project folder:
 
 ```powershell
-cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
+cd F:\LearnflowAI
 npm install
 
 python -m venv .venv
@@ -123,7 +124,7 @@ If PowerShell blocks activation, you can run the backend with the virtual enviro
 Open two PowerShell windows. In the first window, run the frontend:
 
 ```powershell
-cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
+cd F:\LearnflowAI
 npm run dev
 ```
 
@@ -132,7 +133,7 @@ Open the frontend at [http://localhost:5173](http://localhost:5173).
 In the second window, run the API:
 
 ```powershell
-cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
+cd F:\LearnflowAI
 .\.venv\Scripts\Activate.ps1
 python -m uvicorn backend.main:app --reload --port 8000
 ```
@@ -142,7 +143,7 @@ The API is available at [http://localhost:8000](http://localhost:8000).
 In a third PowerShell window, run the local extraction worker:
 
 ```powershell
-cd C:\Users\saumy\OneDrive\Desktop\LearnflowAI
+cd F:\LearnflowAI
 .\.venv\Scripts\python.exe -m backend.worker
 ```
 
@@ -170,11 +171,11 @@ LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 
 The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Set `LEARNFLOW_BEDROCK_API_MODE=converse` only when using a principal authorized for native Bedrock Runtime. At most eight retrieved evidence chunks are sent. Before each request the app reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
 
-`LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only for a private, single-user deployment. The current local authorizer confirms that selected resources exist and are processed, but a public multi-user deployment still needs real sign-in and ownership checks.
+`LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only after configuring the administrator credentials. Registration, salted password storage, revocable bearer sessions, per-user resource ownership, chat history, and quiz ownership are enforced by the API. An internet-facing production deployment should still add HTTPS, email verification/password recovery, rate limiting, and managed secret rotation.
 
 ## Grounded quizzes
 
-The Quiz section uses the same ready materials and Bedrock configuration as chat. Select up to 12 sources, choose 3, 5, 8, or 10 questions, then select **Generate quiz**. Generation samples evidence across the selected materials. The browser receives only the question and four options; correct answers remain in local SQLite until the completed attempt is submitted to the scoring endpoint. After submission, the UI shows the score, correct answer, explanation, and source citation for every question.
+The Quiz section uses the same ready materials and Bedrock configuration as chat. Select up to 12 sources, request any count from 1 to 20, and choose single-answer, multiple-answer, short-answer, or mixed questions. Generation samples evidence across the selected materials. The browser never receives answer keys before submission; those remain in local SQLite until the completed attempt is scored. After submission, the UI shows the score, correct choices or accepted short answer, explanation, and actionable source citations.
 
 Quiz generation consumes one bounded Bedrock request. Scoring is local and does not call Bedrock, Jina, Google, or AWS.
 

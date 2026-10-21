@@ -198,7 +198,8 @@ Then run the same `Invoke-RestMethod` command above.
 
 1. In the frontend, scroll to **Quiz**.
 2. Select one or more ready materials in **Quiz materials**.
-3. Choose 3, 5, 8, or 10 questions and select **Generate quiz**.
+3. Choose any number from 1 to 20, select single-answer, multiple-answer,
+   short-answer, or mixed questions, and select **Generate quiz**.
 4. Answer every question, then select **Submit**.
 5. Review the score, correct answers, explanations, and page, slide, image, or
    timestamp citations.

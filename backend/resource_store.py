@@ -66,6 +66,7 @@ class ResourceRecord:
     created_at: str
     updated_at: str
     source_url: str | None = None
+    thumbnail_url: str | None = None
 
     def public_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -171,6 +172,10 @@ class ResourceStore:
             if "source_url" not in columns:
                 connection.execute(
                     "ALTER TABLE resources ADD COLUMN source_url TEXT"
+                )
+            if "thumbnail_url" not in columns:
+                connection.execute(
+                    "ALTER TABLE resources ADD COLUMN thumbnail_url TEXT"
                 )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_resources_updated_at "
@@ -448,6 +453,7 @@ class ResourceStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             source_url=row["source_url"],
+            thumbnail_url=row["thumbnail_url"],
         )
 
     @staticmethod
@@ -816,7 +822,7 @@ class ResourceStore:
             with self._connect() as connection:
                 rows = connection.execute(
                     """
-                    SELECT users.user_id, users.email, users.display_name, users.role,
+                    SELECT users.user_id, users.role,
                         users.created_at, users.last_seen_at, users.active_seconds,
                         COALESCE(SUM(resources.size_bytes), 0) AS storage_bytes,
                         COUNT(DISTINCT resources.resource_id) AS material_count,
@@ -857,13 +863,11 @@ class ResourceStore:
                 )
             results: list[dict[str, object]] = []
             for row in rows:
-                local, separator, domain = row["email"].partition("@")
-                email_hint = f"{local[:1]}***{separator}{domain}" if separator else "hidden"
                 results.append(
                     {
                         "user_id": row["user_id"],
-                        "display_name": row["display_name"],
-                        "email_hint": email_hint,
+                        "display_name": f"Learner {row['user_id'][:8]}",
+                        "email_hint": "Private account",
                         "role": row["role"],
                         "created_at": row["created_at"],
                         "last_seen_at": row["last_seen_at"],
@@ -923,6 +927,7 @@ class ResourceStore:
         content_hash: str,
         size_bytes: int,
         source_url: str | None = None,
+        thumbnail_url: str | None = None,
     ) -> tuple[ResourceRecord, bool]:
         now = datetime.now(UTC).isoformat()
         try:
@@ -934,8 +939,8 @@ class ResourceStore:
                             resource_id, original_filename, stored_filename,
                             source_type, extension, content_hash, size_bytes,
                             status, error, extraction_json, extraction_version,
-                            created_at, updated_at, source_url
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, NULL, ?, ?, ?)
+                            created_at, updated_at, source_url, thumbnail_url
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'uploaded', NULL, NULL, NULL, ?, ?, ?, ?)
                         """,
                         (
                             resource_id,
@@ -948,6 +953,7 @@ class ResourceStore:
                             now,
                             now,
                             source_url,
+                            thumbnail_url,
                         ),
                     )
                     created = True
@@ -962,6 +968,34 @@ class ResourceStore:
             return record, created
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not create resource metadata.") from exc
+
+    def update_resource_display(
+        self,
+        resource_id: str,
+        *,
+        original_filename: str,
+        thumbnail_url: str | None,
+    ) -> ResourceRecord:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE resources
+                    SET original_filename = ?, thumbnail_url = ?, updated_at = ?
+                    WHERE resource_id = ?
+                    """,
+                    (original_filename, thumbnail_url, now, resource_id),
+                )
+                row = connection.execute(
+                    "SELECT * FROM resources WHERE resource_id = ?", (resource_id,)
+                ).fetchone()
+            record = self._record(row)
+            if record is None:
+                raise ResourceStoreError("Could not update resource metadata.")
+            return record
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not update resource metadata.") from exc
 
     def delete(self, resource_id: str, *, reject_processing: bool = False) -> bool:
         try:

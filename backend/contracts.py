@@ -103,12 +103,18 @@ class ChatTurn(StrictModel):
     content: str = Field(min_length=1, max_length=12_000)
 
 
+class VideoScope(StrictModel):
+    source_id: str = Field(min_length=1, max_length=160)
+    playback_seconds: float = Field(ge=0)
+
+
 class ChatRequest(StrictModel):
     session_id: str = Field(min_length=1, max_length=128)
     question: str = Field(min_length=1, max_length=4_000)
     allowed_source_ids: list[str] = Field(min_length=1, max_length=30)
     video_source_id: str | None = None
     playback_seconds: float | None = Field(default=None, ge=0)
+    video_scopes: list[VideoScope] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def validate_video(self):
@@ -116,6 +122,13 @@ class ChatRequest(StrictModel):
             raise ValueError("video_source_id and playback_seconds must be provided together")
         if self.video_source_id and self.video_source_id not in self.allowed_source_ids:
             raise ValueError("video_source_id must be an allowed source")
+        scoped_ids = [scope.source_id for scope in self.video_scopes]
+        if len(scoped_ids) != len(set(scoped_ids)):
+            raise ValueError("video_scopes cannot contain duplicate videos")
+        if self.video_source_id and self.video_source_id in scoped_ids:
+            raise ValueError("A video cannot use both legacy and multi-video scopes")
+        if any(source_id not in self.allowed_source_ids for source_id in scoped_ids):
+            raise ValueError("Every video scope must be an allowed source")
         return self
 
 
@@ -129,18 +142,22 @@ class ChatResponse(StrictModel):
 class QuizRequest(StrictModel):
     session_id: str = Field(min_length=1, max_length=128)
     allowed_source_ids: list[str] = Field(min_length=1, max_length=12)
-    count: int = Field(default=3, ge=1, le=10)
+    count: int = Field(default=5, ge=1, le=20)
+    quiz_type: Literal["single_answer", "multiple_answer", "short_answer", "mixed"] = "single_answer"
 
 
 class QuizQuestion(StrictModel):
     question_id: str = Field(min_length=1, max_length=64)
     question: str = Field(min_length=1, max_length=1_000)
-    options: list[str] = Field(min_length=2, max_length=6)
+    question_type: Literal["single_answer", "multiple_answer", "short_answer"]
+    options: list[str] = Field(default_factory=list, max_length=6)
+    max_selections: int = Field(default=1, ge=0, le=6)
 
 
 class QuizAnswer(StrictModel):
     question_id: str = Field(min_length=1, max_length=64)
-    option_index: int = Field(ge=0, le=5)
+    selected_option_indices: list[int] = Field(default_factory=list, max_length=6)
+    text_answer: str = Field(default="", max_length=2_000)
 
 
 class QuizResponse(StrictModel):
@@ -151,13 +168,16 @@ class QuizResponse(StrictModel):
 
 class QuizSubmissionRequest(StrictModel):
     session_id: str = Field(min_length=1, max_length=128)
-    answers: list[QuizAnswer] = Field(min_length=1, max_length=10)
+    answers: list[QuizAnswer] = Field(min_length=1, max_length=20)
 
 
 class QuizQuestionResult(StrictModel):
     question_id: str
-    selected_option_index: int = Field(ge=0)
-    correct_option_index: int = Field(ge=0)
+    question_type: Literal["single_answer", "multiple_answer", "short_answer"]
+    selected_option_indices: list[int]
+    correct_option_indices: list[int]
+    submitted_text: str = ""
+    accepted_answers: list[str] = Field(default_factory=list)
     correct: bool
     explanation: str
     citations: list[Citation] = Field(min_length=1)

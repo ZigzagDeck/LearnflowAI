@@ -306,7 +306,9 @@ class BedrockProvider:
         )
         return self._complete_sync(system_prompt, prompt, output_budget)
 
-    def _generate_quiz_sync(self, evidence: list[str], count: int) -> str:
+    def _generate_quiz_sync(
+        self, evidence: list[str], count: int, quiz_type: str
+    ) -> str:
         if not evidence:
             raise ProviderError("Cannot generate a quiz without approved evidence.")
         bounded_evidence = evidence[:12]
@@ -314,15 +316,39 @@ class BedrockProvider:
             f"[E{index}] {item[:3000]}"
             for index, item in enumerate(bounded_evidence, start=1)
         )
+        type_instruction = {
+            "single_answer": (
+                "Every question must use question_type single_answer, include four "
+                "distinct options, exactly one correct_option_indices value, and an "
+                "empty accepted_answers list."
+            ),
+            "multiple_answer": (
+                "Every question must use question_type multiple_answer, include four "
+                "to six distinct options, two or more correct_option_indices values, "
+                "and an empty accepted_answers list."
+            ),
+            "short_answer": (
+                "Every question must use question_type short_answer, include empty "
+                "options and correct_option_indices lists, and provide one to four "
+                "concise accepted_answers."
+            ),
+            "mixed": (
+                "Use a balanced mix of single_answer, multiple_answer, and short_answer "
+                "questions. Follow the relevant field rules for each type."
+            ),
+        }.get(quiz_type)
+        if type_instruction is None:
+            raise ProviderError("Quiz type is invalid.")
         prompt = (
-            f"Create exactly {count} multiple-choice questions from the allowed "
-            "evidence below. Each question must have exactly four distinct options, "
-            "one unambiguously correct option, a concise explanation, and one or "
-            "more evidence_indices referring to the E numbers that support it. "
+            f"Create exactly {count} learning questions from the allowed "
+            f"evidence below. {type_instruction} Every question needs a concise "
+            "explanation and one or more evidence_indices referring to the E numbers "
+            "that support it. "
             "Distribute questions across the supplied evidence and avoid trivial "
             "word-matching questions. Return exactly this JSON shape: "
-            '{"questions":[{"question":"...","options":["...","...","...","..."],'
-            '"correct_option_index":0,"explanation":"...","evidence_indices":[1]}]}'
+            '{"questions":[{"question":"...","question_type":"single_answer",'
+            '"options":["...","...","...","..."],"correct_option_indices":[0],'
+            '"accepted_answers":[],"explanation":"...","evidence_indices":[1]}]}'
             f"\n\nAllowed evidence:\n{context}"
         )
         system_prompt = (
@@ -331,11 +357,15 @@ class BedrockProvider:
             "facts or evidence identifiers. Return only one valid JSON object with "
             "no markdown fences or commentary."
         )
-        output_budget = min(self.config.max_tokens, max(1_200, count * 450))
+        output_budget = min(self.config.max_tokens, max(1_200, count * 320))
         return self._complete_sync(system_prompt, prompt, output_budget)
 
     async def answer(self, question: str, evidence: list[str]) -> str:
         return await asyncio.to_thread(self._answer_sync, question, evidence)
 
-    async def generate_quiz(self, evidence: list[str], count: int) -> str:
-        return await asyncio.to_thread(self._generate_quiz_sync, evidence, count)
+    async def generate_quiz(
+        self, evidence: list[str], count: int, quiz_type: str
+    ) -> str:
+        return await asyncio.to_thread(
+            self._generate_quiz_sync, evidence, count, quiz_type
+        )
