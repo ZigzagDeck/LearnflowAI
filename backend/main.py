@@ -6,18 +6,29 @@ import re
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from .chat_api import router as chat_router
 from .chat_integration import build_local_bedrock_chat_service
+from .auth import (
+    get_current_user,
+    hash_password,
+    normalize_display_name,
+    normalize_email,
+    validate_password,
+)
+from .auth_api import router as auth_router
 from .quiz_api import router as quiz_router
 from .quiz_integration import build_local_bedrock_quiz_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
+    ADMIN_DISPLAY_NAME,
+    ADMIN_EMAIL,
+    ADMIN_PASSWORD,
     BEDROCK_API_MODE,
     BEDROCK_CHAT_ENABLED,
     BEDROCK_MODEL_ID,
@@ -48,6 +59,7 @@ from .resource_store import (
     ResourceRecord,
     ResourceStore,
     ResourceStoreError,
+    UserRecord,
 )
 from .youtube_ingestion import parse_youtube_url
 
@@ -56,6 +68,18 @@ from .youtube_ingestion import parse_youtube_url
 async def lifespan(application: FastAPI):
     store = get_resource_store()
     application.state.resource_store = store
+    if ADMIN_EMAIL and ADMIN_PASSWORD:
+        admin_email = normalize_email(ADMIN_EMAIL)
+        admin_name = normalize_display_name(ADMIN_DISPLAY_NAME)
+        admin_password = validate_password(ADMIN_PASSWORD)
+        password_hash, password_salt = hash_password(admin_password)
+        admin = store.upsert_admin(
+            email=admin_email,
+            display_name=admin_name,
+            password_hash=password_hash,
+            password_salt=password_salt,
+        )
+        store.claim_legacy_data(admin.user_id)
     if BEDROCK_CHAT_ENABLED:
         application.state.chat_service = build_local_bedrock_chat_service(
             store
@@ -66,6 +90,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="LearnFlow AI API", lifespan=lifespan)
 app.middleware("http")(request_logging_middleware)
+app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(quiz_router)
 
@@ -150,7 +175,8 @@ def health_check() -> dict[str, str]:
 
 
 @app.get("/usage/ocr")
-def ocr_usage() -> dict[str, object]:
+def ocr_usage(user: UserRecord = Depends(get_current_user)) -> dict[str, object]:
+    del user
     try:
         period, used_pages = get_resource_store().current_monthly_usage(
             GOOGLE_OCR_PROVIDER_KEY
@@ -179,7 +205,8 @@ def ocr_usage() -> dict[str, object]:
 
 
 @app.get("/usage/embeddings")
-def embedding_usage() -> dict[str, object]:
+def embedding_usage(user: UserRecord = Depends(get_current_user)) -> dict[str, object]:
+    del user
     try:
         period, used_units = get_resource_store().current_monthly_usage(
             JINA_USAGE_PROVIDER_KEY
@@ -203,7 +230,8 @@ def embedding_usage() -> dict[str, object]:
 
 
 @app.get("/usage/bedrock")
-def bedrock_usage() -> dict[str, object]:
+def bedrock_usage(user: UserRecord = Depends(get_current_user)) -> dict[str, object]:
+    del user
     try:
         period, used_units = get_resource_store().current_monthly_usage(
             BEDROCK_USAGE_PROVIDER_KEY
@@ -238,7 +266,10 @@ def get_uploaded_file(document_id: str) -> tuple[Path, str]:
 
 
 @app.post("/materials/upload")
-async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
+async def upload_material(
+    file: UploadFile = File(...),
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
     original_name = Path(file.filename or "").name
     extension = Path(original_name).suffix.lower()
 
@@ -279,6 +310,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
             existing_path = UPLOAD_DIR / existing.stored_filename
             if existing_path.is_file():
                 destination.unlink(missing_ok=True)
+                store.link_user_resource(user.user_id, existing.resource_id)
                 job = store.enqueue_extraction(
                     existing.resource_id, PROCESSING_PIPELINE_VERSION
                 )
@@ -301,6 +333,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
         )
         if not created:
             destination.unlink(missing_ok=True)
+            store.link_user_resource(user.user_id, record.resource_id)
             job = store.enqueue_extraction(
                 record.resource_id, PROCESSING_PIPELINE_VERSION
             )
@@ -310,6 +343,7 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
                 filename=original_name,
                 deduplicated=True,
             )
+        store.link_user_resource(user.user_id, record.resource_id)
         job = store.enqueue_extraction(record.resource_id, PROCESSING_PIPELINE_VERSION)
     except HTTPException:
         destination.unlink(missing_ok=True)
@@ -333,7 +367,10 @@ async def upload_material(file: UploadFile = File(...)) -> dict[str, object]:
 
 
 @app.post("/materials/youtube")
-def import_youtube_material(payload: YouTubeImportRequest) -> dict[str, object]:
+def import_youtube_material(
+    payload: YouTubeImportRequest,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
     try:
         reference = parse_youtube_url(payload.url)
     except ValueError as error:
@@ -344,6 +381,7 @@ def import_youtube_material(payload: YouTubeImportRequest) -> dict[str, object]:
         store = get_resource_store()
         existing = store.find_by_hash(content_hash)
         if existing is not None:
+            store.link_user_resource(user.user_id, existing.resource_id)
             job = store.enqueue_extraction(
                 existing.resource_id, PROCESSING_PIPELINE_VERSION
             )
@@ -360,6 +398,7 @@ def import_youtube_material(payload: YouTubeImportRequest) -> dict[str, object]:
             size_bytes=len(reference.canonical_url.encode("utf-8")),
             source_url=reference.canonical_url,
         )
+        store.link_user_resource(user.user_id, record.resource_id)
         job = store.enqueue_extraction(record.resource_id, PROCESSING_PIPELINE_VERSION)
     except ResourceStoreError as error:
         raise HTTPException(
@@ -369,10 +408,12 @@ def import_youtube_material(payload: YouTubeImportRequest) -> dict[str, object]:
 
 
 @app.get("/materials")
-def list_materials() -> dict[str, list[dict[str, object]]]:
+def list_materials(
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, list[dict[str, object]]]:
     try:
         store = get_resource_store()
-        records = store.list()
+        records = store.list_for_user(user.user_id)
     except ResourceStoreError as error:
         raise HTTPException(
             status_code=503, detail="Local resource metadata storage is unavailable."
@@ -381,19 +422,29 @@ def list_materials() -> dict[str, list[dict[str, object]]]:
 
 
 @app.delete("/materials/{resource_id}")
-def delete_material(resource_id: str) -> dict[str, str]:
+def delete_material(
+    resource_id: str,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, str]:
     normalized_id = resource_id.lower()
     if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
         raise HTTPException(status_code=400, detail="Invalid resource identifier.")
     try:
         store = get_resource_store()
         record = store.get_by_resource_id(normalized_id)
-        if record is None:
+        if record is None or not store.user_has_resource(user.user_id, normalized_id):
             raise HTTPException(status_code=404, detail="Resource was not found.")
-        if not store.delete(normalized_id, reject_processing=True):
+        if record.status == "processing":
+            raise ResourceProcessingError(
+                "This material is processing. Wait for it to finish before deleting it."
+            )
+        removed, orphaned = store.unlink_user_resource(user.user_id, normalized_id)
+        if not removed:
             raise HTTPException(
                 status_code=404, detail="Resource was not found."
             )
+        if orphaned:
+            store.delete(normalized_id, reject_processing=True)
     except ResourceProcessingError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except ResourceStoreError as error:
@@ -401,7 +452,7 @@ def delete_material(resource_id: str) -> dict[str, str]:
             status_code=503, detail="Local resource data could not be deleted."
         ) from error
 
-    if record.extension != ".youtube":
+    if orphaned and record.extension != ".youtube":
         upload_directory = UPLOAD_DIR.resolve()
         candidate = (upload_directory / record.stored_filename).resolve()
         if candidate.parent == upload_directory:
@@ -414,30 +465,38 @@ def delete_material(resource_id: str) -> dict[str, str]:
 
 
 @app.get("/materials/{resource_id}/status")
-def material_status(resource_id: str) -> dict[str, object]:
-    normalized_id = resource_id.lower()
-    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
-        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
-    try:
-        record = get_resource_store().get_by_resource_id(normalized_id)
-    except ResourceStoreError as error:
-        raise HTTPException(
-            status_code=503, detail="Local resource metadata storage is unavailable."
-        ) from error
-    if record is None:
-        raise HTTPException(status_code=404, detail="Resource was not found.")
-    return resource_payload(get_resource_store(), record)
-
-
-@app.post("/materials/{resource_id}/process")
-def queue_material_processing(resource_id: str) -> dict[str, object]:
+def material_status(
+    resource_id: str,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
     normalized_id = resource_id.lower()
     if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
         raise HTTPException(status_code=400, detail="Invalid resource identifier.")
     try:
         store = get_resource_store()
         record = store.get_by_resource_id(normalized_id)
-        if record is None:
+        has_access = store.user_has_resource(user.user_id, normalized_id)
+    except ResourceStoreError as error:
+        raise HTTPException(
+            status_code=503, detail="Local resource metadata storage is unavailable."
+        ) from error
+    if record is None or not has_access:
+        raise HTTPException(status_code=404, detail="Resource was not found.")
+    return resource_payload(store, record)
+
+
+@app.post("/materials/{resource_id}/process")
+def queue_material_processing(
+    resource_id: str,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
+    normalized_id = resource_id.lower()
+    if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
+        raise HTTPException(status_code=400, detail="Invalid resource identifier.")
+    try:
+        store = get_resource_store()
+        record = store.get_by_resource_id(normalized_id)
+        if record is None or not store.user_has_resource(user.user_id, normalized_id):
             raise HTTPException(status_code=404, detail="Resource was not found.")
         job = store.enqueue_extraction(
             normalized_id, PROCESSING_PIPELINE_VERSION, retry_failed=True
@@ -455,14 +514,17 @@ def queue_material_processing(resource_id: str) -> dict[str, object]:
 
 
 @app.get("/materials/{resource_id}/content")
-def material_content(resource_id: str) -> dict[str, object]:
+def material_content(
+    resource_id: str,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
     normalized_id = resource_id.lower()
     if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
         raise HTTPException(status_code=400, detail="Invalid resource identifier.")
     try:
         store = get_resource_store()
         record = store.get_by_resource_id(normalized_id)
-        if record is None:
+        if record is None or not store.user_has_resource(user.user_id, normalized_id):
             raise HTTPException(status_code=404, detail="Resource was not found.")
         content = store.cached_extraction(normalized_id, EXTRACTION_PIPELINE_VERSION)
     except ResourceStoreError as error:
@@ -484,13 +546,19 @@ def material_content(resource_id: str) -> dict[str, object]:
 
 
 @app.get("/materials/{resource_id}/chunks")
-def material_chunks(resource_id: str) -> dict[str, object]:
+def material_chunks(
+    resource_id: str,
+    user: UserRecord = Depends(get_current_user),
+) -> dict[str, object]:
     normalized_id = resource_id.lower()
     if not RESOURCE_ID_PATTERN.fullmatch(normalized_id):
         raise HTTPException(status_code=400, detail="Invalid resource identifier.")
     try:
         store = get_resource_store()
-        if store.get_by_resource_id(normalized_id) is None:
+        if (
+            store.get_by_resource_id(normalized_id) is None
+            or not store.user_has_resource(user.user_id, normalized_id)
+        ):
             raise HTTPException(status_code=404, detail="Resource was not found.")
         chunks = store.list_chunks(normalized_id, CHUNKING_PIPELINE_VERSION)
     except ResourceStoreError as error:
@@ -509,7 +577,10 @@ def material_chunks(resource_id: str) -> dict[str, object]:
 
 
 @app.post("/materials/{document_id}/extract")
-def extract_material(document_id: str):
+def extract_material(
+    document_id: str,
+    user: UserRecord = Depends(get_current_user),
+):
     """Compatibility route: queue work and return immediately, or return cache."""
     path, extension = get_uploaded_file(document_id)
 
@@ -526,6 +597,9 @@ def extract_material(document_id: str):
                 content_hash=hash_file(path),
                 size_bytes=path.stat().st_size,
             )
+            store.link_user_resource(user.user_id, resource.resource_id)
+        elif not store.user_has_resource(user.user_id, resource.resource_id):
+            raise HTTPException(status_code=404, detail="Resource was not found.")
         cached_content = store.cached_extraction(
             resource.resource_id, EXTRACTION_PIPELINE_VERSION
         )

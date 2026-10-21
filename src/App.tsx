@@ -1,11 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DragEvent } from 'react'
+import type { DragEvent, FormEvent } from 'react'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const MAX_FILE_SIZE = 100 * 1024 * 1024
 const ACCEPTED_EXTENSIONS = ['.pdf', '.pptx', '.png', '.jpg', '.jpeg']
 const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
+const AUTH_STORAGE_KEY = 'learnflow.auth.token'
+
+type UserProfile = {
+  user_id: string
+  email: string
+  display_name: string
+  role: 'user' | 'admin'
+}
+
+type AdminUserMetric = {
+  user_id: string
+  display_name: string
+  email_hint: string
+  role: 'user' | 'admin'
+  created_at: string
+  last_seen_at: string
+  active_seconds: number
+  storage_bytes: number
+  material_count: number
+  input_tokens: number
+  output_tokens: number
+  chat_requests: number
+  quiz_requests: number
+  explored_domains: Array<{ label: string; count: number }>
+}
 
 type UploadStatus = 'idle' | 'ready' | 'uploading' | 'success' | 'error'
 type ExtractionStatus = 'idle' | 'queued' | 'processing' | 'success' | 'error'
@@ -109,7 +134,70 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user: UserProfile) => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [email, setEmail] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mode === 'login'
+          ? { email, password }
+          : { email, display_name: displayName, password }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'Authentication failed.')
+      onAuthenticated(payload.token, payload.user)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Authentication failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="brand-mark small" aria-hidden="true">⌑</div>
+        <p className="eyebrow">YOUR PRIVATE STUDY SPACE</p>
+        <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+        <p>Sign in to keep materials, transcripts, conversations, and quizzes separated by account.</p>
+        <form onSubmit={(event) => void submit(event)}>
+          {mode === 'register' && (
+            <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" required /></label>
+          )}
+          <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
+          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required /></label>
+          {mode === 'register' && <small>Use at least 8 characters, one uppercase letter, and one number.</small>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+        </form>
+        <button className="auth-switch" type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
+          {mode === 'login' ? 'New here? Create an account' : 'Already registered? Sign in'}
+        </button>
+      </section>
+    </main>
+  )
+}
+
 function App() {
+  const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [adminOpen, setAdminOpen] = useState(false)
+  const [adminUsers, setAdminUsers] = useState<AdminUserMetric[]>([])
+  const [adminBusy, setAdminBusy] = useState(false)
+  const [adminError, setAdminError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [status, setStatus] = useState<UploadStatus>('idle')
@@ -150,12 +238,60 @@ function App() {
     ? 'Google Document AI'
     : ocrRuntime?.provider === 'rapidocr' ? 'RapidOCR' : 'configured provider'
 
+  const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers)
+    if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
+    return fetch(url, { ...options, headers })
+  }, [authToken])
+
+  useEffect(() => {
+    let active = true
+    if (!authToken) {
+      setCurrentUser(null)
+      setAuthReady(true)
+      return () => { active = false }
+    }
+    const restoreSession = async () => {
+      try {
+        const response = await apiFetch(`${API_BASE_URL}/auth/me`)
+        const payload = await response.json()
+        if (!response.ok) throw new Error(payload.detail || 'Session expired.')
+        if (active) setCurrentUser(payload)
+      } catch {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY)
+        if (active) {
+          setAuthToken('')
+          setCurrentUser(null)
+        }
+      } finally {
+        if (active) setAuthReady(true)
+      }
+    }
+    void restoreSession()
+    return () => { active = false }
+  }, [apiFetch, authToken])
+
+  const authenticated = (token: string, user: UserProfile) => {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, token)
+    setAuthToken(token)
+    setCurrentUser(user)
+    setAuthReady(true)
+  }
+
+  const logout = async () => {
+    try { await apiFetch(`${API_BASE_URL}/auth/logout`, { method: 'POST' }) } catch { /* Local sign-out still succeeds. */ }
+    window.localStorage.removeItem(AUTH_STORAGE_KEY)
+    setAuthToken('')
+    setCurrentUser(null)
+    setAdminOpen(false)
+  }
+
   const loadHistories = useCallback(async (silent = false) => {
     if (!silent) setHistoryBusy(true)
     try {
       const [materialsResponse, chatsResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/materials`),
-        fetch(`${API_BASE_URL}/chat/history`),
+        apiFetch(`${API_BASE_URL}/materials`),
+        apiFetch(`${API_BASE_URL}/chat/history`),
       ])
       const materialsPayload = await materialsResponse.json()
       const chatsPayload = await chatsResponse.json()
@@ -176,18 +312,20 @@ function App() {
     } finally {
       if (!silent) setHistoryBusy(false)
     }
-  }, [])
+  }, [apiFetch])
 
   useEffect(() => {
+    if (!currentUser) return
     const timer = window.setTimeout(() => void loadHistories(), 0)
     return () => window.clearTimeout(timer)
-  }, [loadHistories])
+  }, [currentUser, loadHistories])
 
   useEffect(() => {
+    if (!authToken || !currentUser) return
     let active = true
     const loadOcrRuntime = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/usage/ocr`)
+        const response = await apiFetch(`${API_BASE_URL}/usage/ocr`)
         const payload = await response.json()
         if (response.ok && active) setOcrRuntime(payload)
       } catch {
@@ -196,7 +334,7 @@ function App() {
     }
     void loadOcrRuntime()
     return () => { active = false }
-  }, [])
+  }, [apiFetch, authToken, currentUser])
 
   useEffect(() => {
     if (!materials.some((item) => item.status === 'uploaded' || item.status === 'processing')) return
@@ -209,7 +347,7 @@ function App() {
     let active = true
     const loadVideoDuration = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/materials/${chatVideoSourceId}/content`)
+        const response = await apiFetch(`${API_BASE_URL}/materials/${chatVideoSourceId}/content`)
         const payload = await response.json()
         if (!response.ok) throw new Error(payload.detail || 'The video transcript could not be loaded.')
         const duration = Math.max(0, ...(payload.content || []).map((unit: ExtractedUnit) => unit.end_seconds || 0))
@@ -223,7 +361,7 @@ function App() {
     }
     void loadVideoDuration()
     return () => { active = false }
-  }, [chatVideoSourceId])
+  }, [apiFetch, chatVideoSourceId])
 
   const updateChatSource = (material: MaterialRecord, checked: boolean) => {
     setChatSourceIds((current) => {
@@ -274,6 +412,7 @@ function App() {
     const request = new XMLHttpRequest()
 
     request.open('POST', `${API_BASE_URL}/materials/upload`)
+    request.setRequestHeader('Authorization', `Bearer ${authToken}`)
     request.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) setProgress(Math.round((event.loaded / event.total) * 100))
     })
@@ -310,7 +449,7 @@ function App() {
   }
 
   const loadExtractedContent = useCallback(async (resourceId: string) => {
-    const response = await fetch(`${API_BASE_URL}/materials/${resourceId}/content`)
+    const response = await apiFetch(`${API_BASE_URL}/materials/${resourceId}/content`)
     const payload = await response.json()
     if (!response.ok) throw new Error(payload.detail || 'The processed content could not be loaded.')
     setExtractedContent(payload.content)
@@ -324,7 +463,7 @@ function App() {
       ? `Indexed ${payload.content.length} timestamped caption segments.`
       : `Processed ${payload.content.length} ${units} with local text extraction and ${ocrProviderLabel} OCR.`)
     void loadHistories()
-  }, [loadHistories, ocrProviderLabel])
+  }, [apiFetch, loadHistories, ocrProviderLabel])
 
   const importYoutube = async () => {
     if (!youtubeUrl.trim() || status === 'uploading') return
@@ -334,7 +473,7 @@ function App() {
     setExtractedContent([])
     setExtractionStatus('idle')
     try {
-      const response = await fetch(`${API_BASE_URL}/materials/youtube`, {
+      const response = await apiFetch(`${API_BASE_URL}/materials/youtube`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: youtubeUrl.trim() }),
@@ -364,7 +503,7 @@ function App() {
       if (polling) return
       polling = true
       try {
-        const response = await fetch(`${API_BASE_URL}/materials/${uploadedResourceId}/status`)
+        const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/status`)
         const payload = await response.json()
         if (!response.ok) throw new Error(payload.detail || 'Processing status is unavailable.')
         if (!active) return
@@ -401,7 +540,7 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel])
+  }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
@@ -409,7 +548,7 @@ function App() {
     setProcessingProgress(0)
     setExtractionMessage(`Re-queuing local text extraction and ${ocrProviderLabel} OCR…`)
     try {
-      const response = await fetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
+      const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
       })
       const payload = await response.json()
@@ -427,7 +566,7 @@ function App() {
     setChatBusy(true)
     setChatError('')
     try {
-      const response = await fetch(`${API_BASE_URL}/chat`, {
+      const response = await apiFetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -479,7 +618,7 @@ function App() {
     setQuizResult(null)
     setQuizAnswers({})
     try {
-      const response = await fetch(`${API_BASE_URL}/quiz`, {
+      const response = await apiFetch(`${API_BASE_URL}/quiz`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -503,7 +642,7 @@ function App() {
     setQuizBusy(true)
     setQuizError('')
     try {
-      const response = await fetch(`${API_BASE_URL}/quiz/${quiz.quiz_id}/submit`, {
+      const response = await apiFetch(`${API_BASE_URL}/quiz/${quiz.quiz_id}/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -526,7 +665,7 @@ function App() {
 
   const openChatSession = async (sessionId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/chat/history/${sessionId}`)
+      const response = await apiFetch(`${API_BASE_URL}/chat/history/${sessionId}`)
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'This chat could not be opened.')
       setChatSessionId(payload.session_id)
@@ -550,7 +689,7 @@ function App() {
   const deleteChatSession = async (session: ChatSession) => {
     if (!window.confirm(`Delete this chat history?\n\n“${session.title}”`)) return
     try {
-      const response = await fetch(`${API_BASE_URL}/chat/history/${session.session_id}`, { method: 'DELETE' })
+      const response = await apiFetch(`${API_BASE_URL}/chat/history/${session.session_id}`, { method: 'DELETE' })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The chat could not be deleted.')
       if (chatSessionId === session.session_id) startNewChat()
@@ -565,7 +704,7 @@ function App() {
     if (material.status === 'processing') return
     if (!window.confirm(`Permanently delete “${material.original_filename}” and its processed data? This also removes its cached extraction, chunks, and embeddings.`)) return
     try {
-      const response = await fetch(`${API_BASE_URL}/materials/${material.resource_id}`, { method: 'DELETE' })
+      const response = await apiFetch(`${API_BASE_URL}/materials/${material.resource_id}`, { method: 'DELETE' })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
@@ -590,7 +729,7 @@ function App() {
 
   const retryHistoryMaterial = async (material: MaterialRecord) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/materials/${material.resource_id}/process`, { method: 'POST' })
+      const response = await apiFetch(`${API_BASE_URL}/materials/${material.resource_id}/process`, { method: 'POST' })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The material could not be queued for retry.')
       await loadHistories()
@@ -607,6 +746,29 @@ function App() {
     if (file) selectFile(file)
   }
 
+  const openAdmin = async () => {
+    if (currentUser?.role !== 'admin') return
+    setAdminOpen(true)
+    setAdminBusy(true)
+    setAdminError('')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/admin/users`)
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'Admin metrics could not be loaded.')
+      setAdminUsers(payload.users || [])
+    } catch (error) {
+      setAdminError(error instanceof Error ? error.message : 'Admin metrics could not be loaded.')
+    } finally {
+      setAdminBusy(false)
+    }
+  }
+
+  if (!authReady) {
+    return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
+  }
+
+  if (!currentUser) return <AuthScreen onAuthenticated={authenticated} />
+
   return (
     <div className="app-shell">
       <nav className="topbar" aria-label="Main navigation">
@@ -621,14 +783,45 @@ function App() {
           <a href="#history">History</a>
           <a href="#how-it-works">How it works</a>
         </div>
-        <button className="profile-button" type="button" aria-label="Open profile menu">
-          <span className="profile-avatar">S</span>
-          <span className="profile-name">Student</span>
-          <span className="chevron" aria-hidden="true">⌄</span>
-        </button>
+        <div className="profile-cluster">
+          {currentUser.role === 'admin' && <button className="admin-link" type="button" onClick={() => void openAdmin()}>Admin</button>}
+          <div className="profile-button" aria-label="Signed-in profile">
+            <span className="profile-avatar">{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
+            <span className="profile-name">{currentUser.display_name}</span>
+          </div>
+          <button className="signout-button" type="button" onClick={() => void logout()}>Sign out</button>
+        </div>
       </nav>
 
       <main>
+        {adminOpen && (
+          <section className="admin-panel" aria-label="Administrator usage panel">
+            <div className="section-heading">
+              <div><p className="eyebrow">PRIVACY-SAFE OPERATIONS</p><h2>Admin overview</h2></div>
+              <button className="secondary-button" type="button" onClick={() => setAdminOpen(false)}>Close</button>
+            </div>
+            <p className="admin-privacy">Only aggregate activity is shown. Material names, content, questions, answers, transcripts, and full email addresses stay private.</p>
+            {adminError && <p className="history-alert" role="alert">{adminError}</p>}
+            {adminBusy ? <p>Loading account usage…</p> : (
+              <div className="admin-users">
+                {adminUsers.map((item) => (
+                  <article className="admin-user" key={item.user_id}>
+                    <div><strong>{item.display_name}</strong><small>{item.email_hint} · {item.role}</small></div>
+                    <dl>
+                      <div><dt>Materials</dt><dd>{item.material_count}</dd></div>
+                      <div><dt>Storage</dt><dd>{formatFileSize(item.storage_bytes)}</dd></div>
+                      <div><dt>Input tokens</dt><dd>{item.input_tokens.toLocaleString()}</dd></div>
+                      <div><dt>Output tokens</dt><dd>{item.output_tokens.toLocaleString()}</dd></div>
+                      <div><dt>Active time</dt><dd>{Math.round(item.active_seconds / 60)} min</dd></div>
+                    </dl>
+                    <p>Explored domains: {item.explored_domains.length ? item.explored_domains.map((domain) => `${domain.label} (${domain.count})`).join(', ') : 'None yet'}</p>
+                    <small>Last active {formatDate(item.last_seen_at)}</small>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
         <section className="welcome-section">
           <div>
             <p className="eyebrow">YOUR PERSONAL LEARNING SPACE</p>

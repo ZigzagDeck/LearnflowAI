@@ -19,6 +19,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
 - Guarded Jina AI embeddings with SQLite lexical/dense rank fusion
 - Grounded Bedrock chat and server-scored multiple-choice quizzes with citations
+- Salted-password accounts, revocable sessions, per-user material access, and a privacy-safe admin usage view
 - A homepage with drag-and-drop upload, extraction controls, and a readable learning workspace
 
 YouTube caption ingestion, citation-safe local RAG, document OCR, opt-in Amazon Bedrock grounded chat, and grounded quizzes are implemented. Summaries, uploaded-video transcription, and production authentication remain incomplete.

@@ -22,6 +22,12 @@ UPLOAD_DIR = Path(
 DATABASE_PATH = Path(
     os.getenv("LEARNFLOW_DATABASE_PATH", str(BACKEND_DIR / "data" / "learnflow.db"))
 )
+ADMIN_EMAIL = os.getenv("LEARNFLOW_ADMIN_EMAIL", "").strip().casefold()
+ADMIN_PASSWORD = os.getenv("LEARNFLOW_ADMIN_PASSWORD", "")
+ADMIN_DISPLAY_NAME = os.getenv("LEARNFLOW_ADMIN_DISPLAY_NAME", "LearnFlow Admin").strip()
+AUTH_SESSION_DAYS = max(
+    1, min(90, int(os.getenv("LEARNFLOW_AUTH_SESSION_DAYS", "30")))
+)
 MODEL_CACHE_DIR = Path(
     os.getenv("LEARNFLOW_MODEL_CACHE_DIR", str(BACKEND_DIR / "data" / "models"))
 )

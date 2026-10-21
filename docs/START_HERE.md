@@ -66,6 +66,20 @@ LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=5000
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
 ```
 
+Also configure the administrator account. The password is never committed and
+is re-applied from the environment when the API starts:
+
+```dotenv
+LEARNFLOW_ADMIN_EMAIL=you@example.com
+LEARNFLOW_ADMIN_PASSWORD=choose-a-strong-password-with-an-uppercase-letter-and-number
+LEARNFLOW_ADMIN_DISPLAY_NAME=Your Name
+LEARNFLOW_AUTH_SESSION_DAYS=30
+```
+
+Existing pre-login materials, chat sessions, and quizzes are assigned to this
+administrator the first time the API starts. Other learners can create their
+own separated accounts from the sign-in screen.
+
 Keep the existing Google Document AI and Jina values in the same `.env`.
 
 ## 3. Start LearnFlowAI every time

@@ -23,11 +23,14 @@ class LocalResourceAuthorizer:
 
     store: ResourceStore
 
-    async def ensure_allowed(self, session_id: str, source_ids: list[str]) -> None:
-        del session_id  # Sessions are UI state until real authentication is added.
+    async def ensure_allowed(self, user_id: str, source_ids: list[str]) -> None:
         for source_id in dict.fromkeys(source_ids):
             resource = self.store.get_by_resource_id(source_id)
-            if resource is None or resource.status != "ready":
+            if (
+                resource is None
+                or resource.status != "ready"
+                or not self.store.user_has_resource(user_id, source_id)
+            ):
                 raise AuthorizationError("Requested source is unavailable.")
 
 

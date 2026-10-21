@@ -132,10 +132,10 @@ class GroundedQuizService:
     provider: QuizModelProvider
     store: ResourceStore
 
-    async def generate(self, request: QuizRequest) -> QuizResponse:
+    async def generate(self, request: QuizRequest, user_id: str) -> QuizResponse:
         try:
             await self.authorizer.ensure_allowed(
-                request.session_id, request.allowed_source_ids
+                user_id, request.allowed_source_ids
             )
         except AuthorizationError:
             raise
@@ -193,6 +193,7 @@ class GroundedQuizService:
         try:
             self.store.create_quiz_attempt(
                 quiz_id,
+                user_id,
                 request.session_id,
                 request.allowed_source_ids,
                 stored_questions,
@@ -206,10 +207,10 @@ class GroundedQuizService:
         )
 
     def submit(
-        self, quiz_id: str, request: QuizSubmissionRequest
+        self, quiz_id: str, request: QuizSubmissionRequest, user_id: str
     ) -> QuizSubmissionResponse:
         try:
-            attempt = self.store.get_quiz_attempt(quiz_id)
+            attempt = self.store.get_quiz_attempt(quiz_id, user_id)
         except ResourceStoreError as exc:
             raise QuizUnavailableError("Quiz data is unavailable.") from exc
         if attempt is None or attempt.session_id != request.session_id:
@@ -254,7 +255,9 @@ class GroundedQuizService:
 
         serialized_answers = [answer.model_dump(mode="json") for answer in request.answers]
         try:
-            self.store.complete_quiz_attempt(quiz_id, serialized_answers, score)
+            self.store.complete_quiz_attempt(
+                quiz_id, user_id, serialized_answers, score
+            )
         except ResourceStoreError as exc:
             raise QuizUnavailableError("Quiz result could not be saved.") from exc
         return QuizSubmissionResponse(

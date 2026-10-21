@@ -38,6 +38,30 @@ class YouTubeImportRequest(StrictModel):
     url: str = Field(min_length=1, max_length=2_000)
 
 
+class RegisterRequest(StrictModel):
+    email: str = Field(min_length=5, max_length=254)
+    display_name: str = Field(min_length=2, max_length=80)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(StrictModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class UserProfile(StrictModel):
+    user_id: str
+    email: str
+    display_name: str
+    role: Literal["user", "admin"]
+
+
+class AuthResponse(StrictModel):
+    token: str
+    expires_at: str
+    user: UserProfile
+
+
 class Citation(StrictModel):
     source_id: str = Field(min_length=1)
     source_type: SourceType

@@ -19,7 +19,7 @@ class ChatUnavailableError(RuntimeError):
 
 
 class SourceAuthorizer(Protocol):
-    async def ensure_allowed(self, session_id: str, source_ids: list[str]) -> None:
+    async def ensure_allowed(self, user_id: str, source_ids: list[str]) -> None:
         """Check trusted authenticated ownership/session association."""
 
 
@@ -42,11 +42,13 @@ class GroundedChatService:
     retriever: EvidenceRetriever
     provider: ModelProvider
 
-    async def answer(self, request: ChatRequest) -> ChatResponse:
+    async def answer(
+        self, request: ChatRequest, user_id: str | None = None
+    ) -> ChatResponse:
         # Session IDs/allowed-source IDs supplied by a client are not proof of ownership.
         try:
             await self.authorizer.ensure_allowed(
-                request.session_id, request.allowed_source_ids
+                user_id or request.session_id, request.allowed_source_ids
             )
         except AuthorizationError:
             raise

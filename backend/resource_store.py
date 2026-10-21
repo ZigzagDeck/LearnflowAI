@@ -29,6 +29,28 @@ class MonthlyUsageLimitError(ResourceStoreError):
 
 
 @dataclass(frozen=True)
+class UserRecord:
+    user_id: str
+    email: str
+    display_name: str
+    role: str
+    password_hash: str
+    password_salt: str
+    created_at: str
+    last_seen_at: str
+    active_seconds: int
+    disabled: bool
+
+    def public_dict(self) -> dict[str, object]:
+        return {
+            "user_id": self.user_id,
+            "email": self.email,
+            "display_name": self.display_name,
+            "role": self.role,
+        }
+
+
+@dataclass(frozen=True)
 class ResourceRecord:
     resource_id: str
     original_filename: str
@@ -81,6 +103,7 @@ class ProcessingJob:
 @dataclass(frozen=True)
 class QuizAttemptRecord:
     quiz_id: str
+    owner_user_id: str | None
     session_id: str
     source_ids: list[str]
     questions: list[dict[str, object]]
@@ -155,6 +178,79 @@ class ResourceStore:
             )
             connection.execute(
                 """
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id TEXT PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    display_name TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    password_salt TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'admin')),
+                    created_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    active_seconds INTEGER NOT NULL DEFAULT 0
+                        CHECK (active_seconds >= 0),
+                    disabled INTEGER NOT NULL DEFAULT 0
+                        CHECK (disabled IN (0, 1))
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user "
+                "ON auth_sessions(user_id, expires_at)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_resources (
+                    user_id TEXT NOT NULL,
+                    resource_id TEXT NOT NULL,
+                    linked_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, resource_id),
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY(resource_id) REFERENCES resources(resource_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_user_resources_resource "
+                "ON user_resources(resource_id)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_ai_usage (
+                    user_id TEXT NOT NULL,
+                    period TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0
+                        CHECK (input_tokens >= 0),
+                    output_tokens INTEGER NOT NULL DEFAULT 0
+                        CHECK (output_tokens >= 0),
+                    chat_requests INTEGER NOT NULL DEFAULT 0
+                        CHECK (chat_requests >= 0),
+                    quiz_requests INTEGER NOT NULL DEFAULT 0
+                        CHECK (quiz_requests >= 0),
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(user_id, period),
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                """
                 CREATE TABLE IF NOT EXISTS processing_jobs (
                     job_id TEXT PRIMARY KEY,
                     resource_id TEXT NOT NULL UNIQUE,
@@ -202,6 +298,14 @@ class ResourceStore:
                 )
                 """
             )
+            chat_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(chat_sessions)").fetchall()
+            }
+            if "owner_user_id" not in chat_columns:
+                connection.execute(
+                    "ALTER TABLE chat_sessions ADD COLUMN owner_user_id TEXT"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated_at "
                 "ON chat_sessions(updated_at DESC)"
@@ -239,6 +343,14 @@ class ResourceStore:
                 )
                 """
             )
+            quiz_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(quiz_attempts)").fetchall()
+            }
+            if "owner_user_id" not in quiz_columns:
+                connection.execute(
+                    "ALTER TABLE quiz_attempts ADD COLUMN owner_user_id TEXT"
+                )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_quiz_attempts_session_created "
                 "ON quiz_attempts(session_id, created_at DESC)"
@@ -373,6 +485,402 @@ class ResourceStore:
             end_seconds=row["end_seconds"],
         )
 
+    @staticmethod
+    def _user(row: sqlite3.Row | None) -> UserRecord | None:
+        if row is None:
+            return None
+        return UserRecord(
+            user_id=row["user_id"],
+            email=row["email"],
+            display_name=row["display_name"],
+            role=row["role"],
+            password_hash=row["password_hash"],
+            password_salt=row["password_salt"],
+            created_at=row["created_at"],
+            last_seen_at=row["last_seen_at"],
+            active_seconds=int(row["active_seconds"]),
+            disabled=bool(row["disabled"]),
+        )
+
+    def create_user(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        password_salt: str,
+        role: str = "user",
+    ) -> UserRecord:
+        if role not in {"user", "admin"}:
+            raise ValueError("Invalid user role.")
+        now = datetime.now(UTC).isoformat()
+        user_id = uuid.uuid4().hex
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO users (
+                        user_id, email, display_name, password_hash,
+                        password_salt, role, created_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        email.casefold(),
+                        display_name,
+                        password_hash,
+                        password_salt,
+                        role,
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM users WHERE user_id = ?", (user_id,)
+                ).fetchone()
+            user = self._user(row)
+            if user is None:
+                raise ResourceStoreError("Could not create the user account.")
+            return user
+        except sqlite3.IntegrityError as exc:
+            raise ResourceStoreError("An account with this email already exists.") from exc
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not create the user account.") from exc
+
+    def upsert_admin(
+        self,
+        *,
+        email: str,
+        display_name: str,
+        password_hash: str,
+        password_salt: str,
+    ) -> UserRecord:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO users (
+                        user_id, email, display_name, password_hash,
+                        password_salt, role, created_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?, 'admin', ?, ?)
+                    ON CONFLICT(email) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        password_hash = excluded.password_hash,
+                        password_salt = excluded.password_salt,
+                        role = 'admin',
+                        disabled = 0
+                    """,
+                    (
+                        uuid.uuid4().hex,
+                        email.casefold(),
+                        display_name,
+                        password_hash,
+                        password_salt,
+                        now,
+                        now,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM users WHERE email = ? COLLATE NOCASE",
+                    (email.casefold(),),
+                ).fetchone()
+            user = self._user(row)
+            if user is None:
+                raise ResourceStoreError("Could not configure the admin account.")
+            return user
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not configure the admin account.") from exc
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM users WHERE email = ? COLLATE NOCASE",
+                    (email.casefold(),),
+                ).fetchone()
+            return self._user(row)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read the user account.") from exc
+
+    def create_auth_session(
+        self, user_id: str, token_hash: str, expires_at: str
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    "DELETE FROM auth_sessions WHERE expires_at <= ?", (now,)
+                )
+                connection.execute(
+                    """
+                    INSERT INTO auth_sessions (
+                        token_hash, user_id, created_at, expires_at, last_seen_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (token_hash, user_id, now, expires_at, now),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not create the login session.") from exc
+
+    def resolve_auth_session(self, token_hash: str) -> UserRecord | None:
+        now = datetime.now(UTC)
+        now_text = now.isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT users.*, auth_sessions.last_seen_at AS session_last_seen
+                    FROM auth_sessions
+                    JOIN users ON users.user_id = auth_sessions.user_id
+                    WHERE auth_sessions.token_hash = ?
+                        AND auth_sessions.expires_at > ?
+                        AND users.disabled = 0
+                    """,
+                    (token_hash, now_text),
+                ).fetchone()
+                if row is None:
+                    return None
+                try:
+                    previous = datetime.fromisoformat(row["session_last_seen"])
+                    elapsed = max(0, int((now - previous).total_seconds()))
+                except (TypeError, ValueError):
+                    elapsed = 0
+                active_increment = elapsed if elapsed <= 300 else 0
+                connection.execute(
+                    "UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?",
+                    (now_text, token_hash),
+                )
+                connection.execute(
+                    """
+                    UPDATE users
+                    SET last_seen_at = ?, active_seconds = active_seconds + ?
+                    WHERE user_id = ?
+                    """,
+                    (now_text, active_increment, row["user_id"]),
+                )
+                refreshed = connection.execute(
+                    "SELECT * FROM users WHERE user_id = ?", (row["user_id"],)
+                ).fetchone()
+            return self._user(refreshed)
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not validate the login session.") from exc
+
+    def delete_auth_session(self, token_hash: str) -> bool:
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    "DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,)
+                )
+            return cursor.rowcount > 0
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not end the login session.") from exc
+
+    def claim_legacy_data(self, user_id: str) -> None:
+        """Assign pre-authentication local data to the configured admin."""
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO user_resources (user_id, resource_id, linked_at)
+                    SELECT ?, resource_id, ? FROM resources
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM user_resources
+                        WHERE user_resources.resource_id = resources.resource_id
+                    )
+                    """,
+                    (user_id, now),
+                )
+                connection.execute(
+                    "UPDATE chat_sessions SET owner_user_id = ? WHERE owner_user_id IS NULL",
+                    (user_id,),
+                )
+                connection.execute(
+                    "UPDATE quiz_attempts SET owner_user_id = ? WHERE owner_user_id IS NULL",
+                    (user_id,),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not assign existing local data.") from exc
+
+    def link_user_resource(self, user_id: str, resource_id: str) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO user_resources (user_id, resource_id, linked_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, resource_id, now),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not link the material to this account.") from exc
+
+    def user_has_resource(self, user_id: str, resource_id: str) -> bool:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT 1 FROM user_resources
+                    WHERE user_id = ? AND resource_id = ?
+                    """,
+                    (user_id, resource_id),
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not verify material access.") from exc
+
+    def unlink_user_resource(self, user_id: str, resource_id: str) -> tuple[bool, bool]:
+        """Return (link_removed, resource_has_no_remaining_users)."""
+        try:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                cursor = connection.execute(
+                    """
+                    DELETE FROM user_resources
+                    WHERE user_id = ? AND resource_id = ?
+                    """,
+                    (user_id, resource_id),
+                )
+                remaining = connection.execute(
+                    "SELECT COUNT(*) AS count FROM user_resources WHERE resource_id = ?",
+                    (resource_id,),
+                ).fetchone()
+            return cursor.rowcount > 0, int(remaining["count"]) == 0
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not remove material access.") from exc
+
+    def list_for_user(self, user_id: str) -> list[ResourceRecord]:
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT resources.* FROM resources
+                    JOIN user_resources
+                        ON user_resources.resource_id = resources.resource_id
+                    WHERE user_resources.user_id = ?
+                    ORDER BY resources.updated_at DESC
+                    """,
+                    (user_id,),
+                ).fetchall()
+            return [record for row in rows if (record := self._record(row))]
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not list account materials.") from exc
+
+    def record_user_ai_usage(
+        self,
+        user_id: str,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        operation: str,
+    ) -> None:
+        period = datetime.now(UTC).strftime("%Y-%m")
+        now = datetime.now(UTC).isoformat()
+        chat_increment = 1 if operation == "chat" else 0
+        quiz_increment = 1 if operation == "quiz" else 0
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO user_ai_usage (
+                        user_id, period, input_tokens, output_tokens,
+                        chat_requests, quiz_requests, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(user_id, period) DO UPDATE SET
+                        input_tokens = input_tokens + excluded.input_tokens,
+                        output_tokens = output_tokens + excluded.output_tokens,
+                        chat_requests = chat_requests + excluded.chat_requests,
+                        quiz_requests = quiz_requests + excluded.quiz_requests,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        user_id,
+                        period,
+                        max(0, input_tokens),
+                        max(0, output_tokens),
+                        chat_increment,
+                        quiz_increment,
+                        now,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not record account usage.") from exc
+
+    def list_admin_user_metrics(self) -> list[dict[str, object]]:
+        period = datetime.now(UTC).strftime("%Y-%m")
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT users.user_id, users.email, users.display_name, users.role,
+                        users.created_at, users.last_seen_at, users.active_seconds,
+                        COALESCE(SUM(resources.size_bytes), 0) AS storage_bytes,
+                        COUNT(DISTINCT resources.resource_id) AS material_count,
+                        COALESCE(usage.input_tokens, 0) AS input_tokens,
+                        COALESCE(usage.output_tokens, 0) AS output_tokens,
+                        COALESCE(usage.chat_requests, 0) AS chat_requests,
+                        COALESCE(usage.quiz_requests, 0) AS quiz_requests
+                    FROM users
+                    LEFT JOIN user_resources ON user_resources.user_id = users.user_id
+                    LEFT JOIN resources ON resources.resource_id = user_resources.resource_id
+                    LEFT JOIN user_ai_usage AS usage
+                        ON usage.user_id = users.user_id AND usage.period = ?
+                    WHERE users.disabled = 0
+                    GROUP BY users.user_id
+                    ORDER BY users.created_at ASC
+                    """,
+                    (period,),
+                ).fetchall()
+                domain_rows = connection.execute(
+                    """
+                    SELECT user_resources.user_id, resources.source_type,
+                        COUNT(*) AS count
+                    FROM user_resources
+                    JOIN resources ON resources.resource_id = user_resources.resource_id
+                    GROUP BY user_resources.user_id, resources.source_type
+                    """
+                ).fetchall()
+            domains: dict[str, list[dict[str, object]]] = {}
+            for row in domain_rows:
+                label = {
+                    "pdf": "Documents",
+                    "pptx": "Presentations",
+                    "image": "Images",
+                    "video": "Video learning",
+                }.get(row["source_type"], "Other")
+                domains.setdefault(row["user_id"], []).append(
+                    {"label": label, "count": int(row["count"])}
+                )
+            results: list[dict[str, object]] = []
+            for row in rows:
+                local, separator, domain = row["email"].partition("@")
+                email_hint = f"{local[:1]}***{separator}{domain}" if separator else "hidden"
+                results.append(
+                    {
+                        "user_id": row["user_id"],
+                        "display_name": row["display_name"],
+                        "email_hint": email_hint,
+                        "role": row["role"],
+                        "created_at": row["created_at"],
+                        "last_seen_at": row["last_seen_at"],
+                        "active_seconds": int(row["active_seconds"]),
+                        "storage_bytes": int(row["storage_bytes"]),
+                        "material_count": int(row["material_count"]),
+                        "input_tokens": int(row["input_tokens"]),
+                        "output_tokens": int(row["output_tokens"]),
+                        "chat_requests": int(row["chat_requests"]),
+                        "quiz_requests": int(row["quiz_requests"]),
+                        "explored_domains": domains.get(row["user_id"], []),
+                    }
+                )
+            return results
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not load admin usage metrics.") from exc
+
     def find_by_hash(self, content_hash: str) -> ResourceRecord | None:
         try:
             with self._connect() as connection:
@@ -483,6 +991,7 @@ class ResourceStore:
 
     def append_chat_turn(
         self,
+        owner_user_id: str,
         session_id: str,
         question: str,
         answer: str,
@@ -499,14 +1008,32 @@ class ResourceStore:
                 connection.execute(
                     """
                     INSERT INTO chat_sessions (
-                        session_id, title, source_ids_json, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?)
+                        session_id, title, source_ids_json, created_at, updated_at,
+                        owner_user_id
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_id) DO UPDATE SET
                         source_ids_json = excluded.source_ids_json,
                         updated_at = excluded.updated_at
+                    WHERE chat_sessions.owner_user_id = excluded.owner_user_id
                     """,
-                    (session_id, title, json.dumps(normalized_sources), now, now),
+                    (
+                        session_id,
+                        title,
+                        json.dumps(normalized_sources),
+                        now,
+                        now,
+                        owner_user_id,
+                    ),
                 )
+                owned = connection.execute(
+                    """
+                    SELECT 1 FROM chat_sessions
+                    WHERE session_id = ? AND owner_user_id = ?
+                    """,
+                    (session_id, owner_user_id),
+                ).fetchone()
+                if owned is None:
+                    raise ResourceStoreError("Chat session belongs to another account.")
                 connection.executemany(
                     """
                     INSERT INTO chat_messages (
@@ -528,7 +1055,7 @@ class ResourceStore:
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not save chat history.") from exc
 
-    def list_chat_sessions(self) -> list[dict[str, object]]:
+    def list_chat_sessions(self, owner_user_id: str) -> list[dict[str, object]]:
         try:
             with self._connect() as connection:
                 rows = connection.execute(
@@ -537,9 +1064,11 @@ class ResourceStore:
                         (SELECT COUNT(*) FROM chat_messages
                          WHERE chat_messages.session_id = sessions.session_id) AS message_count
                     FROM chat_sessions AS sessions
+                    WHERE sessions.owner_user_id = ?
                     ORDER BY updated_at DESC
                     LIMIT 100
-                    """
+                    """,
+                    (owner_user_id,),
                 ).fetchall()
             return [
                 {
@@ -555,12 +1084,17 @@ class ResourceStore:
         except (sqlite3.Error, ValueError, TypeError) as exc:
             raise ResourceStoreError("Could not list chat history.") from exc
 
-    def get_chat_session(self, session_id: str) -> dict[str, object] | None:
+    def get_chat_session(
+        self, session_id: str, owner_user_id: str
+    ) -> dict[str, object] | None:
         try:
             with self._connect() as connection:
                 session = connection.execute(
-                    "SELECT * FROM chat_sessions WHERE session_id = ?",
-                    (session_id,),
+                    """
+                    SELECT * FROM chat_sessions
+                    WHERE session_id = ? AND owner_user_id = ?
+                    """,
+                    (session_id, owner_user_id),
                 ).fetchone()
                 if session is None:
                     return None
@@ -592,11 +1126,15 @@ class ResourceStore:
         except (sqlite3.Error, ValueError, TypeError) as exc:
             raise ResourceStoreError("Could not read chat history.") from exc
 
-    def delete_chat_session(self, session_id: str) -> bool:
+    def delete_chat_session(self, session_id: str, owner_user_id: str) -> bool:
         try:
             with self._connect() as connection:
                 cursor = connection.execute(
-                    "DELETE FROM chat_sessions WHERE session_id = ?", (session_id,)
+                    """
+                    DELETE FROM chat_sessions
+                    WHERE session_id = ? AND owner_user_id = ?
+                    """,
+                    (session_id, owner_user_id),
                 )
             return cursor.rowcount > 0
         except sqlite3.Error as exc:
@@ -609,6 +1147,7 @@ class ResourceStore:
         try:
             return QuizAttemptRecord(
                 quiz_id=row["quiz_id"],
+                owner_user_id=row["owner_user_id"],
                 session_id=row["session_id"],
                 source_ids=json.loads(row["source_ids_json"]),
                 questions=json.loads(row["questions_json"]),
@@ -628,6 +1167,7 @@ class ResourceStore:
     def create_quiz_attempt(
         self,
         quiz_id: str,
+        owner_user_id: str,
         session_id: str,
         source_ids: list[str],
         questions: list[dict[str, object]],
@@ -639,8 +1179,9 @@ class ResourceStore:
                     """
                     INSERT INTO quiz_attempts (
                         quiz_id, session_id, source_ids_json, questions_json,
-                        status, answers_json, score, created_at, submitted_at
-                    ) VALUES (?, ?, ?, ?, 'ready', NULL, NULL, ?, NULL)
+                        status, answers_json, score, created_at, submitted_at,
+                        owner_user_id
+                    ) VALUES (?, ?, ?, ?, 'ready', NULL, NULL, ?, NULL, ?)
                     """,
                     (
                         quiz_id,
@@ -648,6 +1189,7 @@ class ResourceStore:
                         json.dumps(list(dict.fromkeys(source_ids))),
                         json.dumps(questions),
                         now,
+                        owner_user_id,
                     ),
                 )
                 row = connection.execute(
@@ -660,18 +1202,28 @@ class ResourceStore:
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not save generated quiz.") from exc
 
-    def get_quiz_attempt(self, quiz_id: str) -> QuizAttemptRecord | None:
+    def get_quiz_attempt(
+        self, quiz_id: str, owner_user_id: str
+    ) -> QuizAttemptRecord | None:
         try:
             with self._connect() as connection:
                 row = connection.execute(
-                    "SELECT * FROM quiz_attempts WHERE quiz_id = ?", (quiz_id,)
+                    """
+                    SELECT * FROM quiz_attempts
+                    WHERE quiz_id = ? AND owner_user_id = ?
+                    """,
+                    (quiz_id, owner_user_id),
                 ).fetchone()
             return self._quiz_attempt(row)
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not read generated quiz.") from exc
 
     def complete_quiz_attempt(
-        self, quiz_id: str, answers: list[dict[str, object]], score: int
+        self,
+        quiz_id: str,
+        owner_user_id: str,
+        answers: list[dict[str, object]],
+        score: int,
     ) -> None:
         now = datetime.now(UTC).isoformat()
         try:
@@ -681,9 +1233,9 @@ class ResourceStore:
                     UPDATE quiz_attempts
                     SET status = 'submitted', answers_json = ?, score = ?,
                         submitted_at = ?
-                    WHERE quiz_id = ? AND status = 'ready'
+                    WHERE quiz_id = ? AND owner_user_id = ? AND status = 'ready'
                     """,
-                    (json.dumps(answers), score, now, quiz_id),
+                    (json.dumps(answers), score, now, quiz_id, owner_user_id),
                 )
             if cursor.rowcount != 1:
                 raise ResourceStoreError("Quiz was already submitted or was not found.")
