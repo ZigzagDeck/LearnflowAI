@@ -23,6 +23,8 @@ from .auth import (
 from .auth_api import router as auth_router
 from .quiz_api import router as quiz_router
 from .quiz_integration import build_local_bedrock_quiz_service
+from .summary_api import router as summary_router
+from .summary_integration import build_local_bedrock_summary_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
@@ -44,6 +46,8 @@ from .config import (
     OCR_LOCAL_FALLBACK_ENABLED,
     PROCESSING_PIPELINE_VERSION,
     UPLOAD_DIR,
+    VISUAL_MAX_UNITS_PER_MATERIAL,
+    VISUAL_UNDERSTANDING_ENABLED,
     JINA_EMBEDDING_DIMENSIONS,
     JINA_EMBEDDING_MODEL,
     JINA_MONTHLY_TOKEN_LIMIT,
@@ -85,6 +89,7 @@ async def lifespan(application: FastAPI):
             store
         )
         application.state.quiz_service = build_local_bedrock_quiz_service(store)
+        application.state.summary_service = build_local_bedrock_summary_service(store)
     yield
 
 
@@ -93,6 +98,7 @@ app.middleware("http")(request_logging_middleware)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(quiz_router)
+app.include_router(summary_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -243,6 +249,8 @@ def bedrock_usage(user: UserRecord = Depends(get_current_user)) -> dict[str, obj
         ) from error
     return {
         "enabled": BEDROCK_CHAT_ENABLED,
+        "visual_understanding_enabled": VISUAL_UNDERSTANDING_ENABLED,
+        "visual_max_units_per_material": VISUAL_MAX_UNITS_PER_MATERIAL,
         "api_mode": BEDROCK_API_MODE,
         "model": BEDROCK_MODEL_ID,
         "period": period,

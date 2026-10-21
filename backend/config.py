@@ -61,6 +61,12 @@ JINA_MONTHLY_TOKEN_LIMIT = max(
     1, int(os.getenv("LEARNFLOW_JINA_MONTHLY_TOKEN_LIMIT", "10000000"))
 )
 BEDROCK_CHAT_ENABLED = _environment_flag("LEARNFLOW_BEDROCK_CHAT_ENABLED")
+VISUAL_UNDERSTANDING_ENABLED = _environment_flag(
+    "LEARNFLOW_VISUAL_UNDERSTANDING_ENABLED", BEDROCK_CHAT_ENABLED
+)
+VISUAL_MAX_UNITS_PER_MATERIAL = max(
+    1, min(12, int(os.getenv("LEARNFLOW_VISUAL_MAX_UNITS_PER_MATERIAL", "6")))
+)
 BEDROCK_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1")).strip()
 BEDROCK_API_MODE = os.getenv(
     "LEARNFLOW_BEDROCK_API_MODE", "mantle_chat_completions"
@@ -104,7 +110,8 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv(
 EXTRACTION_PIPELINE_VERSION = (
     f"native-{OCR_PROVIDER}-"
     f"{'local-enabled' if OCR_LOCAL_ENGINE_ENABLED else 'cloud-only'}-"
-    "selective-v3+youtube-captions-v1"
+    "selective-v3+youtube-captions-v1+"
+    f"visual-{'gemma-v1' if VISUAL_UNDERSTANDING_ENABLED else 'disabled'}"
 )
 CHUNKING_PIPELINE_VERSION = "semantic-boundary-v1"
 _embedding_version_name = (

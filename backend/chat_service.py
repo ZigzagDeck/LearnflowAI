@@ -33,6 +33,16 @@ class EvidenceRetriever(Protocol):
     ) -> list[RetrievalHit]: ...
 
 
+class ConversationHistory(Protocol):
+    def get_recent_chat_turns(
+        self,
+        session_id: str,
+        owner_user_id: str,
+        *,
+        limit: int = 8,
+        source_ids: list[str] | None = None,
+    ) -> list[dict[str, str]]: ...
+
 REFUSAL = "I cannot answer that from the material available at your current lesson position."
 
 
@@ -41,6 +51,7 @@ class GroundedChatService:
     authorizer: SourceAuthorizer
     retriever: EvidenceRetriever
     provider: ModelProvider
+    history: ConversationHistory | None = None
 
     async def answer(
         self, request: ChatRequest, user_id: str | None = None
@@ -55,16 +66,34 @@ class GroundedChatService:
         except Exception as exc:
             raise ChatUnavailableError("Source authorization unavailable.") from exc
 
+        conversation: list[dict[str, str]] = []
+        if self.history is not None and user_id is not None:
+            try:
+                conversation = self.history.get_recent_chat_turns(
+                    request.session_id,
+                    user_id,
+                    limit=8,
+                    source_ids=request.allowed_source_ids,
+                )
+            except Exception as exc:
+                raise ChatUnavailableError("Conversation history unavailable.") from exc
+        retrieval_query = request.question
+        if conversation:
+            recent_context = " ".join(
+                turn["content"][:600] for turn in conversation[-2:]
+            )
+            retrieval_query = f"{recent_context}\nFollow-up question: {request.question}"
+
         try:
             documents = await self.retriever.retrieve_documents(
-                request.question, request.allowed_source_ids
+                retrieval_query, request.allowed_source_ids
             )
             video_groups: list[list[RetrievalHit]] = []
             if request.video_source_id is not None:
                 # ChatRequest guarantees playback_seconds exists with video_source_id.
                 video_groups.append(
                     await self.retriever.retrieve_video(
-                        request.question,
+                        retrieval_query,
                         request.video_source_id,
                         request.playback_seconds,
                     )
@@ -72,12 +101,15 @@ class GroundedChatService:
             for scope in request.video_scopes:
                 video_groups.append(
                     await self.retriever.retrieve_video(
-                        request.question,
+                        retrieval_query,
                         scope.source_id,
                         scope.playback_seconds,
                     )
                 )
-            evidence_groups = [(documents, "document"), *[(group, "video") for group in video_groups]]
+            evidence_groups = [
+                (documents, "document"),
+                *[(group, "video") for group in video_groups],
+            ]
             ranked_hits = [
                 (group[position], channel)
                 for position in range(max((len(group) for group, _ in evidence_groups), default=0))
@@ -133,8 +165,11 @@ class GroundedChatService:
             )
 
         try:
-            answer = await self.provider.answer(
-                request.question, [hit.text for hit in evidence]
+            evidence_text = [hit.text for hit in evidence]
+            answer = (
+                await self.provider.answer(request.question, evidence_text, conversation)
+                if conversation
+                else await self.provider.answer(request.question, evidence_text)
             )
         except ProviderError as exc:
             raise ChatUnavailableError("Answer generation unavailable.") from exc

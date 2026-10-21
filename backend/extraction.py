@@ -69,6 +69,7 @@ def _content_record(
         "reference_type": reference_type,
         "reference_number": reference_number,
         "text": text,
+        "literal_text": text,
         "native_text": native_text.strip(),
         "ocr_text": ocr_text.strip(),
         "has_text": bool(text),

@@ -12,6 +12,7 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - A React + TypeScript + Vite frontend
 - A Python + FastAPI backend with health, local material-upload, and extraction endpoints
 - Google Document AI OCR for scanned/visual PDF pages, PPTX images, and standalone images
+- Bounded Gemma 4 visual interpretation for diagrams, workflows, charts, and relationships
 - A local SQLite resource registry with content-hash deduplication and cached extraction results
 - A restart-safe SQLite processing queue with one CPU-heavy extraction job at a time
 - Automatic UI polling, per-page/slide progress, failure details, and explicit retry
@@ -19,11 +20,12 @@ LearnFlow AI is a learning workspace being built in small milestones. The curren
 - Local SQLite FTS5/BM25 retrieval filtered by an explicit resource allow-list
 - Guarded Jina AI embeddings with SQLite lexical/dense rank fusion
 - Grounded Bedrock chat with Markdown, actionable citations, and multi-video playback scopes
+- Grounded concise, detailed, and study-guide summaries across selected materials
 - Server-scored single-answer, multiple-answer, short-answer, and mixed quizzes with citations
 - Salted-password accounts, revocable sessions, per-user material access, and a privacy-safe admin usage view
 - A responsive warm-olive workspace with drag-and-drop ingestion, saved transcript viewing, and YouTube thumbnails
 
-YouTube caption ingestion, citation-safe local RAG, document OCR, account-isolated Bedrock chat, grounded quizzes, and local password authentication are implemented. Uploaded-video transcription, password recovery/email verification, and hardened internet-scale deployment controls remain future production work.
+YouTube caption ingestion, citation-safe local RAG, document OCR, bounded visual understanding, conversational Bedrock chat, grounded summaries and quizzes, and local password authentication are implemented. Captionless/uploaded-media transcription, password recovery/email verification, and hardened internet-scale deployment controls remain future production work.
 
 ## Folder guide
 
@@ -57,6 +59,8 @@ Jina AI is the default embedding provider, using `jina-embeddings-v3` with 256-d
 FastEmbed is the automatic last resort when Jina still cannot serve a request after retries. Set `LEARNFLOW_EMBEDDING_PROVIDER=fastembed` to use it directly, or keep `LEARNFLOW_EMBEDDING_LOCAL_FALLBACK_ENABLED=true` while Jina remains the primary provider. The local model is loaded lazily only after a Jina failure, stays CPU-only and one-threaded, uses batches of at most four texts, and is protected by the 768 MB free-memory gate.
 
 PDF and PPTX extraction is limited to 500 pages/slides and 2 million extracted characters. Google OCR runs outside web requests in the dedicated worker and sends bounded page/image bytes directly; it does not use Google Cloud Storage. Clean, substantial native PDF text is kept locally without a paid OCR call unless the page contains raster or vector visuals. Scanned/short pages, PPTX images, and standalone images always pass through OCR. SQLite claiming guarantees that only one job runs at once. Jobs retain progress and failures across restarts; work with no update for 15 minutes is re-queued.
+
+When visual understanding is enabled, the same worker selects only pages/slides with visual structure, samples at most the configured per-material limit, resizes each image to a bounded JPEG, and sends it inline to the configured Gemma 4 model through Bedrock Mantle. The model description is stored separately as `visual_description` and also indexed with the literal text so questions about arrows, flow, axes, and relationships are retrievable. No S3 bucket or other AWS service is used.
 
 ## Prerequisites
 
@@ -167,9 +171,11 @@ LEARNFLOW_BEDROCK_API_MODE=mantle_chat_completions
 LEARNFLOW_BEDROCK_MODEL_ID=google.gemma-4-31b
 LEARNFLOW_BEDROCK_MAX_OUTPUT_TOKENS=5000
 LEARNFLOW_BEDROCK_MONTHLY_TOKEN_UNIT_LIMIT=2000000
+LEARNFLOW_VISUAL_UNDERSTANDING_ENABLED=true
+LEARNFLOW_VISUAL_MAX_UNITS_PER_MATERIAL=6
 ```
 
-The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Set `LEARNFLOW_BEDROCK_API_MODE=converse` only when using a principal authorized for native Bedrock Runtime. At most eight retrieved evidence chunks are sent. Before each request the app reserves a deliberately conservative unit count—the UTF-8 input bytes plus the full output allowance—in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
+The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Gemma 4 visual understanding requires this Mantle mode. At most eight retrieved chat chunks or sixteen summary chunks are sent. Before every text or image request the app reserves a deliberately conservative unit count in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter and visual configuration at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
 
 `LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only after configuring the administrator credentials. Registration, salted password storage, revocable bearer sessions, per-user resource ownership, chat history, and quiz ownership are enforced by the API. An internet-facing production deployment should still add HTTPS, email verification/password recovery, rate limiting, and managed secret rotation.
 
@@ -178,6 +184,12 @@ The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-sc
 The Quiz section uses the same ready materials and Bedrock configuration as chat. Select up to 12 sources, request any count from 1 to 20, and choose single-answer, multiple-answer, short-answer, or mixed questions. Generation samples evidence across the selected materials. The browser never receives answer keys before submission; those remain in local SQLite until the completed attempt is scored. After submission, the UI shows the score, correct choices or accepted short answer, explanation, and actionable source citations.
 
 Quiz generation consumes one bounded Bedrock request. Scoring is local and does not call Bedrock, Jina, Google, or AWS.
+
+## Grounded summaries and follow-up chat
+
+The Summary section creates a concise overview, detailed summary, or study guide from up to 12 selected ready materials. It samples citation-preserving chunks across every selected source, renders the result as Markdown, and exposes the supporting page, slide, image, or YouTube timestamp chips.
+
+Chat follow-up turns now receive up to eight recent server-owned messages from the same account, session, and exact source selection. The most recent context is also used to improve retrieval for questions such as “explain that second point.” Changing the selected sources automatically prevents earlier context from being reused until a new turn establishes that source set.
 
 ## Test the health endpoint
 
@@ -238,7 +250,7 @@ The older stored-filename route remains as a compatibility endpoint. It now queu
 curl.exe -X POST http://localhost:8000/materials/REPLACE_WITH_STORED_FILENAME.pdf/extract
 ```
 
-Scanned/short PDF pages and PDF pages containing raster or vector visuals are rendered and sent to Google OCR, so screenshot and diagram labels are not silently skipped. Text-heavy native PDF pages without visuals avoid a redundant paid call. Embedded raster images in PPTX files are scanned individually. OCR recovers visible text, but it does not reliably understand arrows, spatial relationships, or workflow meaning; that remains part of the later Bedrock visual-understanding stage.
+Scanned/short PDF pages and PDF pages containing raster or vector visuals are rendered and sent to Google OCR, so screenshot and diagram labels are not silently skipped. Text-heavy native PDF pages without visuals avoid a redundant paid call. Embedded raster images in PPTX files are scanned individually. OCR supplies literal text; the bounded Gemma 4 visual stage separately explains supported arrows, spatial relationships, workflows, and chart meaning.
 
 ## Checks
 

@@ -139,6 +139,16 @@ class ChatResponse(StrictModel):
     citations: list[Citation]
 
 
+class SummaryRequest(StrictModel):
+    allowed_source_ids: list[str] = Field(min_length=1, max_length=12)
+    style: Literal["concise", "detailed", "study_guide"] = "detailed"
+
+
+class SummaryResponse(StrictModel):
+    summary: str = Field(min_length=1, max_length=20_000)
+    citations: list[Citation] = Field(min_length=1)
+
+
 class QuizRequest(StrictModel):
     session_id: str = Field(min_length=1, max_length=128)
     allowed_source_ids: list[str] = Field(min_length=1, max_length=12)

@@ -247,6 +247,8 @@ class ResourceStore:
                         CHECK (chat_requests >= 0),
                     quiz_requests INTEGER NOT NULL DEFAULT 0
                         CHECK (quiz_requests >= 0),
+                    summary_requests INTEGER NOT NULL DEFAULT 0
+                        CHECK (summary_requests >= 0),
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(user_id, period),
                     FOREIGN KEY(user_id) REFERENCES users(user_id)
@@ -254,6 +256,15 @@ class ResourceStore:
                 )
                 """
             )
+            usage_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(user_ai_usage)").fetchall()
+            }
+            if "summary_requests" not in usage_columns:
+                connection.execute(
+                    "ALTER TABLE user_ai_usage ADD COLUMN summary_requests "
+                    "INTEGER NOT NULL DEFAULT 0 CHECK (summary_requests >= 0)"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS processing_jobs (
@@ -788,19 +799,21 @@ class ResourceStore:
         now = datetime.now(UTC).isoformat()
         chat_increment = 1 if operation == "chat" else 0
         quiz_increment = 1 if operation == "quiz" else 0
+        summary_increment = 1 if operation == "summary" else 0
         try:
             with self._connect() as connection:
                 connection.execute(
                     """
                     INSERT INTO user_ai_usage (
                         user_id, period, input_tokens, output_tokens,
-                        chat_requests, quiz_requests, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        chat_requests, quiz_requests, summary_requests, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id, period) DO UPDATE SET
                         input_tokens = input_tokens + excluded.input_tokens,
                         output_tokens = output_tokens + excluded.output_tokens,
                         chat_requests = chat_requests + excluded.chat_requests,
                         quiz_requests = quiz_requests + excluded.quiz_requests,
+                        summary_requests = summary_requests + excluded.summary_requests,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -810,6 +823,7 @@ class ResourceStore:
                         max(0, output_tokens),
                         chat_increment,
                         quiz_increment,
+                        summary_increment,
                         now,
                     ),
                 )
@@ -829,7 +843,8 @@ class ResourceStore:
                         COALESCE(usage.input_tokens, 0) AS input_tokens,
                         COALESCE(usage.output_tokens, 0) AS output_tokens,
                         COALESCE(usage.chat_requests, 0) AS chat_requests,
-                        COALESCE(usage.quiz_requests, 0) AS quiz_requests
+                        COALESCE(usage.quiz_requests, 0) AS quiz_requests,
+                        COALESCE(usage.summary_requests, 0) AS summary_requests
                     FROM users
                     LEFT JOIN user_resources ON user_resources.user_id = users.user_id
                     LEFT JOIN resources ON resources.resource_id = user_resources.resource_id
@@ -878,6 +893,7 @@ class ResourceStore:
                         "output_tokens": int(row["output_tokens"]),
                         "chat_requests": int(row["chat_requests"]),
                         "quiz_requests": int(row["quiz_requests"]),
+                        "summary_requests": int(row["summary_requests"]),
                         "explored_domains": domains.get(row["user_id"], []),
                     }
                 )
@@ -1159,6 +1175,48 @@ class ResourceStore:
             }
         except (sqlite3.Error, ValueError, TypeError) as exc:
             raise ResourceStoreError("Could not read chat history.") from exc
+
+    def get_recent_chat_turns(
+        self,
+        session_id: str,
+        owner_user_id: str,
+        *,
+        limit: int = 8,
+        source_ids: Sequence[str] | None = None,
+    ) -> list[dict[str, str]]:
+        """Return bounded, server-owned context for follow-up questions."""
+        bounded_limit = max(1, min(12, limit))
+        try:
+            with self._connect() as connection:
+                owned = connection.execute(
+                    """
+                    SELECT source_ids_json FROM chat_sessions
+                    WHERE session_id = ? AND owner_user_id = ?
+                    """,
+                    (session_id, owner_user_id),
+                ).fetchone()
+                if owned is None:
+                    return []
+                if source_ids is not None:
+                    saved_sources = set(json.loads(owned["source_ids_json"]))
+                    if saved_sources != set(source_ids):
+                        return []
+                rows = connection.execute(
+                    """
+                    SELECT role, content FROM chat_messages
+                    WHERE session_id = ?
+                    ORDER BY created_at DESC, message_id DESC
+                    LIMIT ?
+                    """,
+                    (session_id, bounded_limit),
+                ).fetchall()
+            return [
+                {"role": row["role"], "content": str(row["content"])[:4_000]}
+                for row in reversed(rows)
+                if row["role"] in {"user", "assistant"}
+            ]
+        except (sqlite3.Error, json.JSONDecodeError, TypeError) as exc:
+            raise ResourceStoreError("Could not read conversational context.") from exc
 
     def delete_chat_session(self, session_id: str, owner_user_id: str) -> bool:
         try:

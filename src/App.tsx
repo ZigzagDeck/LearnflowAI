@@ -31,6 +31,7 @@ type AdminUserMetric = {
   output_tokens: number
   chat_requests: number
   quiz_requests: number
+  summary_requests: number
   explored_domains: Array<{ label: string; count: number }>
 }
 
@@ -44,13 +45,22 @@ type OcrRuntime = {
   local_fallback_enabled: boolean
 }
 
+type BedrockRuntime = {
+  enabled: boolean
+  visual_understanding_enabled: boolean
+  visual_max_units_per_material: number
+  model: string
+}
+
 type ExtractedUnit = {
   reference_type: 'page' | 'slide' | 'image' | 'timestamp'
   reference_number: number
   text: string
+  literal_text?: string
   has_text: boolean
   ocr_applied: boolean
   extraction_method: string
+  visual_description?: string
   start_seconds?: number
   end_seconds?: number
 }
@@ -146,6 +156,11 @@ type QuizResult = {
   questions: QuizQuestionResult[]
 }
 
+type SummaryResult = {
+  summary: string
+  citations: ChatMessage['citations']
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -234,6 +249,7 @@ function App() {
   const [adminUsers, setAdminUsers] = useState<AdminUserMetric[]>([])
   const [adminBusy, setAdminBusy] = useState(false)
   const [adminError, setAdminError] = useState('')
+  const [videoPreview, setVideoPreview] = useState<{ title: string; embedUrl: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [status, setStatus] = useState<UploadStatus>('idle')
@@ -266,10 +282,16 @@ function App() {
   const [quiz, setQuiz] = useState<QuizAttempt | null>(null)
   const [quizAnswers, setQuizAnswers] = useState<Record<string, QuizAnswerState>>({})
   const [quizResult, setQuizResult] = useState<QuizResult | null>(null)
+  const [summarySourceIds, setSummarySourceIds] = useState<string[]>([])
+  const [summaryStyle, setSummaryStyle] = useState<'concise' | 'detailed' | 'study_guide'>('detailed')
+  const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null)
+  const [summaryBusy, setSummaryBusy] = useState(false)
+  const [summaryError, setSummaryError] = useState('')
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
   const [ocrRuntime, setOcrRuntime] = useState<OcrRuntime | null>(null)
+  const [bedrockRuntime, setBedrockRuntime] = useState<BedrockRuntime | null>(null)
   const ocrProviderLabel = ocrRuntime?.provider === 'google_document_ai'
     ? 'Google Document AI'
     : ocrRuntime?.provider === 'rapidocr' ? 'RapidOCR' : 'configured provider'
@@ -363,6 +385,9 @@ function App() {
       setQuizSourceIds((current) => current.length
         ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
         : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
+      setSummarySourceIds((current) => current.length
+        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
+        : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
       setHistoryMessage('')
     } catch (error) {
       setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded.')
@@ -382,9 +407,13 @@ function App() {
     let active = true
     const loadOcrRuntime = async () => {
       try {
-        const response = await apiFetch(`${API_BASE_URL}/usage/ocr`)
-        const payload = await response.json()
-        if (response.ok && active) setOcrRuntime(payload)
+        const [ocrResponse, bedrockResponse] = await Promise.all([
+          apiFetch(`${API_BASE_URL}/usage/ocr`),
+          apiFetch(`${API_BASE_URL}/usage/bedrock`),
+        ])
+        const [ocrPayload, bedrockPayload] = await Promise.all([ocrResponse.json(), bedrockResponse.json()])
+        if (ocrResponse.ok && active) setOcrRuntime(ocrPayload)
+        if (bedrockResponse.ok && active) setBedrockRuntime(bedrockPayload)
       } catch {
         // Processing errors still surface through the material status endpoint.
       }
@@ -485,7 +514,7 @@ function App() {
         setExtractionStatus(response.processing_job?.status === 'completed' ? 'queued' : (response.processing_job?.status || 'queued'))
         setMessage(response.deduplicated
           ? 'This material already exists. Its saved processing result will be reused.'
-          : `Uploaded securely. Local text extraction and ${ocrProviderLabel} OCR have been queued automatically.`)
+          : `Uploaded securely. Text extraction, ${ocrProviderLabel} OCR${bedrockRuntime?.visual_understanding_enabled ? ', and Bedrock visual understanding' : ''} have been queued automatically.`)
         void loadHistories()
       } else {
         let detail = 'The upload could not be completed. Please try again.'
@@ -578,7 +607,7 @@ function App() {
         } else if (job?.status === 'processing') {
           setExtractionStatus('processing')
           setExtractionMessage(job.progress_total
-            ? `Extracting native text locally and sending visual content to ${ocrProviderLabel}… ${job.progress_current} of ${job.progress_total}`
+            ? `Extracting text, running ${ocrProviderLabel} OCR${bedrockRuntime?.visual_understanding_enabled ? ', and interpreting relevant visuals with Bedrock' : ''}… ${job.progress_current} of ${job.progress_total}`
             : activeYoutubeUrl ? 'Retrieving timestamped YouTube captions…' : `Starting local text extraction and ${ocrProviderLabel} OCR…`)
         } else {
           setExtractionStatus('queued')
@@ -600,7 +629,7 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel])
+  }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel, bedrockRuntime?.visual_understanding_enabled])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
@@ -687,6 +716,9 @@ function App() {
     setQuiz(null)
     setQuizAnswers({})
     setQuizResult(null)
+    setSummarySourceIds([])
+    setSummaryResult(null)
+    setSummaryError('')
     setQuizError('')
   }
 
@@ -748,6 +780,29 @@ function App() {
     }
   }
 
+  const generateSummary = async () => {
+    if (summaryBusy || summarySourceIds.length === 0) return
+    setSummaryBusy(true)
+    setSummaryError('')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          allowed_source_ids: summarySourceIds,
+          style: summaryStyle,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The summary could not be generated.')
+      setSummaryResult(payload)
+    } catch (error) {
+      setSummaryError(error instanceof Error ? error.message : 'The summary could not be generated.')
+    } finally {
+      setSummaryBusy(false)
+    }
+  }
+
   const openChatSession = async (sessionId: string) => {
     try {
       const response = await apiFetch(`${API_BASE_URL}/chat/history/${sessionId}`)
@@ -791,6 +846,7 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
       setQuizSourceIds((current) => current.filter((id) => id !== material.resource_id))
+      setSummarySourceIds((current) => current.filter((id) => id !== material.resource_id))
       setChatVideoScopes((current) => {
         const next = { ...current }
         delete next[material.resource_id]
@@ -821,16 +877,29 @@ function App() {
     }
   }
 
-  const openMaterial = async (material: MaterialRecord) => {
+  const openMaterial = async (
+    material: MaterialRecord,
+    referenceType?: string,
+    referenceNumber?: number,
+  ) => {
     if (material.status !== 'ready') return
     setHistoryMessage('')
     setUploadedResourceId(material.resource_id)
+    setSelectedFile(null)
+    setStatus('success')
     setActiveYoutubeUrl(material.source_url || '')
     setExtractionStatus('processing')
     setExtractionMessage(material.source_type === 'video' ? 'Opening saved transcript…' : 'Opening saved extracted content…')
     try {
       await loadExtractedContent(material.resource_id)
-      window.setTimeout(() => document.getElementById('workspace-content')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+      window.setTimeout(() => {
+        const target = referenceType && referenceNumber
+          ? document.getElementById(`content-${material.resource_id}-${referenceType}-${referenceNumber}`)
+          : document.getElementById('workspace-content')
+        target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        target?.classList.add('citation-highlight')
+        if (target) window.setTimeout(() => target.classList.remove('citation-highlight'), 2200)
+      }, 0)
     } catch (error) {
       setExtractionStatus('error')
       setExtractionMessage(error instanceof Error ? error.message : 'Saved content could not be opened.')
@@ -850,10 +919,12 @@ function App() {
                 ? `${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : 'Source'
         const label = `${sourceName} · ${location}`
         if (material?.source_type === 'video' && material.source_url) {
-          const joiner = material.source_url.includes('?') ? '&' : '?'
-          return <a className="citation-chip" key={`${citation.chunk_id || index}`} href={`${material.source_url}${joiner}t=${Math.floor(citation.start_seconds || 0)}s`} target="_blank" rel="noreferrer">▶ {label}</a>
+          const videoId = new URL(material.source_url).searchParams.get('v')
+          return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => videoId && setVideoPreview({ title: label, embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?start=${Math.floor(citation.start_seconds || 0)}&autoplay=1` })}>▶ {label}</button>
         }
-        return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => material && void openMaterial(material)}>↗ {label}</button>
+        const referenceType = citation.page ? 'page' : citation.slide ? 'slide' : 'image'
+        const referenceNumber = citation.page || citation.slide || citation.image
+        return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => material && void openMaterial(material, referenceType, referenceNumber)}>↗ {label}</button>
       })}
     </div>
   )
@@ -911,6 +982,15 @@ function App() {
         </div>
       </header>
 
+      {videoPreview && (
+        <div className="preview-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setVideoPreview(null) }}>
+          <section className="video-preview" role="dialog" aria-modal="true" aria-label="YouTube citation preview">
+            <div className="section-heading"><div><p className="eyebrow">CITED MOMENT</p><h2>{videoPreview.title}</h2></div><button className="secondary-button" type="button" onClick={() => setVideoPreview(null)}>Close</button></div>
+            <iframe src={videoPreview.embedUrl} title={videoPreview.title} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+          </section>
+        </div>
+      )}
+
       <main>
         {adminOpen && (
           <div className="admin-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false) }}>
@@ -933,6 +1013,7 @@ function App() {
                       <div><dt>Est. output tokens</dt><dd>{item.output_tokens.toLocaleString()}</dd></div>
                       <div><dt>Chat requests</dt><dd>{item.chat_requests.toLocaleString()}</dd></div>
                       <div><dt>Quiz requests</dt><dd>{item.quiz_requests.toLocaleString()}</dd></div>
+                      <div><dt>Summary requests</dt><dd>{item.summary_requests.toLocaleString()}</dd></div>
                       <div><dt>Active time</dt><dd>{Math.round(item.active_seconds / 60)} min</dd></div>
                     </dl>
                     <p>Explored domains: {item.explored_domains.length ? item.explored_domains.map((domain) => `${domain.label} (${domain.count})`).join(', ') : 'None yet'}</p>
@@ -1005,6 +1086,7 @@ function App() {
                 OCR: {ocrProviderLabel} · {ocrRuntime.execution === 'google_cloud' ? 'Google Cloud' : 'Local'} · local fallback {ocrRuntime.local_fallback_enabled ? 'on' : 'off'}
               </p>
             )}
+            {bedrockRuntime?.visual_understanding_enabled && <p className="file-note">Visual understanding: {bedrockRuntime.model} · up to {bedrockRuntime.visual_max_units_per_material} relevant visuals per material</p>}
             <div className="source-divider"><span>or use a video link</span></div>
             <div className="youtube-row">
               <input
@@ -1047,7 +1129,7 @@ function App() {
                     >
                       {extractionStatus === 'queued' ? 'Queued for OCR'
                         : extractionStatus === 'processing' ? `${ocrProviderLabel} OCR · ${processingProgress}%`
-                          : extractionStatus === 'success' ? 'Text + OCR complete'
+                          : extractionStatus === 'success' ? `Text + OCR${bedrockRuntime?.visual_understanding_enabled ? ' + visual' : ''} complete`
                             : 'Retry text + OCR'}
                     </button>
                   </>
@@ -1086,7 +1168,7 @@ function App() {
             {extractedContent.length > 0 ? (
               <div className="extracted-content">
                 {extractedContent.map((unit) => (
-                  <section className={`content-unit ${!unit.has_text ? 'content-unit-empty' : ''}`} key={`${unit.reference_type}-${unit.reference_number}`}>
+                  <section id={`content-${uploadedResourceId}-${unit.reference_type}-${unit.reference_number}`} className={`content-unit ${!unit.has_text ? 'content-unit-empty' : ''}`} key={`${unit.reference_type}-${unit.reference_number}`}>
                     <div className="content-unit-heading">
                       <span>{unit.reference_type === 'timestamp'
                         ? `${formatTimestamp(unit.start_seconds)}–${formatTimestamp(unit.end_seconds)}`
@@ -1094,7 +1176,8 @@ function App() {
                       <small>{unit.extraction_method.replace('+', ' + ')}</small>
                       {!unit.has_text && <small>No extractable text</small>}
                     </div>
-                    <p>{unit.text || 'No readable text was found after OCR.'}</p>
+                    <p>{(unit.literal_text ?? unit.text) || 'No readable text was found after OCR.'}</p>
+                    {unit.visual_description && <div className="visual-insight"><strong>Visual interpretation</strong><MarkdownAnswer>{unit.visual_description}</MarkdownAnswer></div>}
                   </section>
                 ))}
               </div>
@@ -1182,6 +1265,48 @@ function App() {
                 </button>
               </form>
             </div>
+          </div>
+        </section>
+
+        <section className="summary-section" id="summary">
+          <div className="section-heading">
+            <div><p className="eyebrow">GROUNDED OVERVIEW</p><h2>Summarize your materials</h2></div>
+            {summaryResult && <button className="secondary-button" type="button" onClick={() => { setSummaryResult(null); setSummaryError('') }}>Clear summary</button>}
+          </div>
+          <div className="summary-layout">
+            <aside className="source-picker">
+              <h3>Summary materials</h3>
+              {materials.filter((item) => item.status === 'ready').length ? materials.filter((item) => item.status === 'ready').map((material) => (
+                <label className="source-option" key={material.resource_id}>
+                  <input
+                    type="checkbox"
+                    checked={summarySourceIds.includes(material.resource_id)}
+                    disabled={summaryBusy || (!summarySourceIds.includes(material.resource_id) && summarySourceIds.length >= 12)}
+                    onChange={(event) => setSummarySourceIds((current) => event.target.checked
+                      ? [...new Set([...current, material.resource_id])].slice(0, 12)
+                      : current.filter((id) => id !== material.resource_id))}
+                  />
+                  {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
+                  <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
+                </label>
+              )) : <p className="history-muted">Finish processing a material to summarize it.</p>}
+              <div className="quiz-controls">
+                <label htmlFor="summary-style">Summary style</label>
+                <select id="summary-style" value={summaryStyle} onChange={(event) => setSummaryStyle(event.target.value as typeof summaryStyle)} disabled={summaryBusy}>
+                  <option value="concise">Concise overview</option>
+                  <option value="detailed">Detailed summary</option>
+                  <option value="study_guide">Study guide</option>
+                </select>
+                <button type="button" onClick={() => void generateSummary()} disabled={summaryBusy || summarySourceIds.length === 0}>{summaryBusy ? 'Summarizing…' : 'Generate summary'}</button>
+                <small>Select up to 12 materials. The summary is generated only from sampled, citation-preserving evidence.</small>
+              </div>
+            </aside>
+            <article className="summary-panel" aria-live="polite" aria-busy={summaryBusy}>
+              {summaryError && <p className="history-alert" role="alert">{summaryError}</p>}
+              {summaryBusy && <div className="summary-loading"><div className="thinking-dots" aria-hidden="true"><span /><span /><span /></div><p>Building a grounded summary from your selected sources…</p></div>}
+              {!summaryBusy && summaryResult && <><MarkdownAnswer>{summaryResult.summary}</MarkdownAnswer>{renderCitations(summaryResult.citations)}</>}
+              {!summaryBusy && !summaryResult && <div className="chat-empty"><span aria-hidden="true">≡</span><h3>Create a source-backed summary</h3><p>Choose your materials and the level of detail you need.</p></div>}
+            </article>
           </div>
         </section>
 

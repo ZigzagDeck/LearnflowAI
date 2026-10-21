@@ -51,4 +51,5 @@ def build_local_bedrock_chat_service(store: ResourceStore) -> GroundedChatServic
         authorizer=LocalResourceAuthorizer(store),
         retriever=SQLiteHybridRetriever(store, get_embedding_provider()),
         provider=provider,
+        history=store,
     )

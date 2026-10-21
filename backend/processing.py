@@ -7,6 +7,8 @@ from .chunking import build_chunks
 from .config import (
     CHUNKING_PIPELINE_VERSION,
     EXTRACTION_PIPELINE_VERSION,
+    VISUAL_MAX_UNITS_PER_MATERIAL,
+    VISUAL_UNDERSTANDING_ENABLED,
     YOUTUBE_TRANSCRIPT_LANGUAGES,
 )
 from .embeddings import (
@@ -22,6 +24,12 @@ from .youtube_ingestion import (
     YouTubeTranscriptError,
     parse_youtube_url,
 )
+from .visual_understanding import (
+    VisualAnalyzer,
+    VisualUnderstandingError,
+    build_visual_analyzer,
+    enrich_with_visual_understanding,
+)
 
 
 SAFE_GENERIC_FAILURE = "The material could not be processed."
@@ -36,6 +44,7 @@ def process_next_job(
     caption_factory: Callable[[], YouTubeCaptionReader] = (
         lambda: YouTubeCaptionReader(YOUTUBE_TRANSCRIPT_LANGUAGES)
     ),
+    visual_factory: Callable[[ResourceStore], VisualAnalyzer] = build_visual_analyzer,
 ) -> ProcessingJob | None:
     """Claim and complete at most one queued job in the calling process."""
     job = store.claim_next_extraction()
@@ -76,6 +85,14 @@ def process_next_job(
                 if extractor is None:
                     raise ValueError("This material type is not supported.")
                 content = extractor(path, ocr_factory(), report_progress)
+                if VISUAL_UNDERSTANDING_ENABLED:
+                    content = enrich_with_visual_understanding(
+                        path,
+                        resource.extension,
+                        content,
+                        visual_factory(store),
+                        VISUAL_MAX_UNITS_PER_MATERIAL,
+                    )
 
         if not any(item["has_text"] for item in content):
             unit_name = {".pdf": "pages", ".pptx": "slides"}.get(
@@ -119,7 +136,11 @@ def process_next_job(
                 embeddings=embeddings,
             )
         store.complete_job(job.job_id)
-    except (OCRUnavailableError, YouTubeTranscriptError) as error:
+    except (
+        OCRUnavailableError,
+        YouTubeTranscriptError,
+        VisualUnderstandingError,
+    ) as error:
         store.fail_job(
             job.job_id,
             job.resource_id,
