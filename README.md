@@ -163,4 +163,4 @@ Do not expose port 8000 directly on the router. Authentication, application rate
 
 ## Current scope
 
-This repository is suitable for private use and small prototype demonstrations on a single persistent backend. Captionless video/audio transcription, multi-instance database coordination, object storage, password recovery, and internet-scale operations are intentionally outside the current implementation.
+This repository is suitable for private use and small prototype demonstrations on a single persistent backend. Captionless video/audio transcription, multi-instance database coordination, object storage, password recovery, and generating answers in the chat section based on internet are intentionally outside the current implementation.
