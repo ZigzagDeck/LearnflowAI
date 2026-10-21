@@ -545,6 +545,9 @@ def material_content(
         if record is None or not store.user_has_resource(user.user_id, normalized_id):
             raise HTTPException(status_code=404, detail="Resource was not found.")
         content = store.cached_extraction(normalized_id, EXTRACTION_PIPELINE_VERSION)
+        cached_for_current_pipeline = content is not None
+        if content is None:
+            content = store.saved_extraction(normalized_id)
     except ResourceStoreError as error:
         raise HTTPException(
             status_code=503, detail="Extracted content is unavailable."
@@ -552,13 +555,17 @@ def material_content(
     if content is None:
         raise HTTPException(
             status_code=409,
-            detail="Material processing has not completed yet.",
+            detail=(
+                "No saved extracted content is available yet. Start or retry "
+                "processing from History."
+            ),
         )
     return {
         "resource_id": normalized_id,
         "source_name": record.original_filename,
         "extraction_status": "completed",
         "cached": True,
+        "pipeline_current": cached_for_current_pipeline,
         "content": content,
     }
 

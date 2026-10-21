@@ -1815,6 +1815,28 @@ class ResourceStore:
         except (sqlite3.Error, json.JSONDecodeError) as exc:
             raise ResourceStoreError("Could not read cached extracted content.") from exc
 
+    def saved_extraction(
+        self, resource_id: str
+    ) -> list[dict[str, object]] | None:
+        """Read persisted extraction for History even if its pipeline is now older."""
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    """
+                    SELECT extraction_json FROM resources
+                    WHERE resource_id = ? AND status IN ('ready', 'processing')
+                    """,
+                    (resource_id,),
+                ).fetchone()
+            if row is None or row["extraction_json"] is None:
+                return None
+            value = json.loads(row["extraction_json"])
+            if not isinstance(value, list):
+                raise ResourceStoreError("Cached extraction has an invalid shape.")
+            return value
+        except (sqlite3.Error, json.JSONDecodeError) as exc:
+            raise ResourceStoreError("Could not read saved extracted content.") from exc
+
     def enqueue_extraction(
         self,
         resource_id: str,
