@@ -1215,3 +1215,319 @@ h1, h2, h3 { color: var(--ink); } h1 { max-width: 760px; font-size: clamp(42px, 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Theme identities: typography, atmosphere, geometry, and contrast. */
+:root {
+  --theme-font-body: 'DM Sans', sans-serif;
+  --theme-font-heading: 'Playfair Display', Georgia, serif;
+  --theme-font-display: 'Playfair Display', Georgia, serif;
+  --theme-card-radius: 18px;
+  --theme-control-radius: 9px;
+  --theme-panel-shadow: 0 18px 55px rgba(67, 65, 38, .08);
+  --theme-panel-border: 1px solid var(--line);
+  --theme-panel-surface: var(--paper);
+  --accent-text: var(--olive-dark);
+  --on-accent: #fffdf5;
+}
+
+body { font-family: var(--theme-font-body); }
+:root h1, :root h2, :root h3, :root .section-heading h2, :root .auth-card h1 { font-family: var(--theme-font-heading); }
+:root h1, :root .auth-card h1 { font-family: var(--theme-font-display); }
+:root :is(input, textarea, select, .youtube-row button, .submit-upload, .extract-button, .chat-compose button, .quiz-controls button, .quiz-submit, .secondary-button, .delete-button, .nav-links button, .admin-link, .export-button, .signout-button) { border-radius: var(--theme-control-radius); }
+.auth-shell, .app-loading { background: transparent; }
+
+:is(.upload-card, .workspace-card, .chat-section, .summary-section, .quiz-section, .interview-section, .history-section, .auth-card, .admin-panel, .video-preview) {
+  border: var(--theme-panel-border);
+  border-radius: var(--theme-card-radius);
+  background: var(--theme-panel-surface);
+  box-shadow: var(--theme-panel-shadow);
+}
+
+/* Olive Library — warm paper, bookish serif headings, quiet editorial texture. */
+:root[data-palette='olive'] body {
+  background-color: var(--page);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(103, 87, 54, .025) 0, rgba(103, 87, 54, .025) 1px, transparent 1px, transparent 5px),
+    radial-gradient(circle at 88% 0%, var(--page-glow), transparent 34%);
+}
+:root[data-palette='olive'] .topbar { border-bottom-width: 2px; }
+
+/* Midnight Terminal — command-line grid, mono typography, sharp framed panels. */
+:root[data-palette='terminal'] {
+  --theme-font-body: 'DM Mono', monospace;
+  --theme-font-heading: 'DM Mono', monospace;
+  --theme-font-display: 'DM Mono', monospace;
+  --theme-card-radius: 5px;
+  --theme-control-radius: 4px;
+  --theme-panel-shadow: inset 0 0 0 1px color-mix(in srgb, var(--olive) 9%, transparent);
+  --theme-panel-surface: color-mix(in srgb, var(--paper) 93%, transparent);
+}
+:root[data-palette='terminal'] body {
+  background-color: var(--page);
+  background-image:
+    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--olive) 4%, transparent) 3px 4px),
+    linear-gradient(color-mix(in srgb, var(--olive) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--olive) 8%, transparent) 1px, transparent 1px),
+    radial-gradient(circle at 82% 5%, var(--page-glow), transparent 32%);
+  background-size: 100% 4px, 32px 32px, 32px 32px, auto;
+}
+:root[data-palette='terminal'] :is(.eyebrow, .card-kicker, .brand-copy small)::before { content: '> '; }
+:root[data-palette='terminal'] .topbar { border-bottom: 1px solid var(--olive); }
+
+/* Daylight Desk — bright architectural light, generous space, restrained sans type. */
+:root[data-palette='daylight'] {
+  --theme-font-body: 'DM Sans', sans-serif;
+  --theme-font-heading: 'Space Grotesk', sans-serif;
+  --theme-font-display: 'Space Grotesk', sans-serif;
+  --theme-card-radius: 14px;
+  --theme-control-radius: 10px;
+  --theme-panel-shadow: 0 22px 70px rgba(58, 68, 62, .1);
+}
+:root[data-palette='daylight'] body {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(116deg, rgba(255, 255, 255, .58) 0 21%, transparent 21% 46%, rgba(255, 255, 255, .24) 46% 57%, transparent 57%),
+    radial-gradient(circle at 90% 0%, var(--page-glow), transparent 36%);
+  background-attachment: fixed;
+}
+:root[data-palette='daylight'] .eyebrow { letter-spacing: .22em; }
+
+/* Botanical Notes — rounded study cards, soft organic color blooms, friendly type. */
+:root[data-palette='botanical'] {
+  --theme-font-body: 'Nunito Sans', sans-serif;
+  --theme-font-heading: 'Nunito Sans', sans-serif;
+  --theme-font-display: 'Playfair Display', Georgia, serif;
+  --theme-card-radius: 28px;
+  --theme-control-radius: 14px;
+  --theme-panel-shadow: 0 22px 60px rgba(113, 70, 91, .12);
+  --theme-panel-surface: color-mix(in srgb, var(--paper) 94%, transparent);
+}
+:root[data-palette='botanical'] body {
+  background-color: var(--page);
+  background-image:
+    radial-gradient(ellipse at 8% 12%, rgba(242, 177, 193, .24), transparent 25%),
+    radial-gradient(ellipse at 90% 18%, rgba(165, 202, 139, .22), transparent 26%),
+    radial-gradient(ellipse at 72% 90%, rgba(250, 202, 153, .18), transparent 30%);
+  background-attachment: fixed;
+}
+:root[data-palette='botanical'] .brand-mark { border-radius: 50% 50% 50% 14%; transform: rotate(-3deg); }
+
+/* Blueprint Studio — drafting grid, technical mono headings, crisp squared modules. */
+:root[data-palette='blueprint'] {
+  --theme-font-body: 'Space Grotesk', sans-serif;
+  --theme-font-heading: 'DM Mono', monospace;
+  --theme-font-display: 'DM Mono', monospace;
+  --theme-card-radius: 3px;
+  --theme-control-radius: 3px;
+  --theme-panel-shadow: 7px 7px 0 color-mix(in srgb, var(--olive) 12%, transparent);
+  --theme-panel-border: 1.5px solid var(--line);
+  --theme-panel-surface: color-mix(in srgb, var(--paper) 94%, transparent);
+}
+:root[data-palette='blueprint'] body {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--olive) 13%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--olive) 13%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--olive) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--olive) 5%, transparent) 1px, transparent 1px);
+  background-size: 112px 112px, 112px 112px, 28px 28px, 28px 28px;
+}
+:root[data-palette='blueprint'] .section-heading { padding-bottom: 12px; border-bottom: 1px dashed var(--line); }
+
+/* Legal Archive — parchment grain, case-file typography, authoritative rule lines. */
+:root[data-palette='legal'] {
+  --theme-font-body: 'Libre Baskerville', Georgia, serif;
+  --theme-font-heading: 'Libre Baskerville', Georgia, serif;
+  --theme-font-display: 'Libre Baskerville', Georgia, serif;
+  --theme-card-radius: 4px;
+  --theme-control-radius: 3px;
+  --theme-panel-shadow: 0 16px 38px rgba(73, 48, 27, .14);
+  --theme-panel-border: 1px solid var(--line);
+}
+:root[data-palette='legal'] body {
+  background-color: var(--page);
+  background-image:
+    repeating-linear-gradient(0deg, rgba(98, 67, 40, .03) 0, rgba(98, 67, 40, .03) 1px, transparent 1px, transparent 4px),
+    linear-gradient(90deg, transparent 0 8%, color-mix(in srgb, var(--olive) 15%, transparent) 8% calc(8% + 1px), transparent calc(8% + 1px));
+}
+:root[data-palette='legal'] :is(.chat-section, .summary-section, .quiz-section, .interview-section, .history-section) { border-left: 5px solid var(--olive); }
+:root[data-palette='legal'] .eyebrow { font-family: 'DM Sans', sans-serif; font-weight: 700; }
+
+/* Classic Academy — ruled notebook atmosphere and scholarly display type. */
+:root[data-palette='academy'] {
+  --theme-font-body: 'Libre Baskerville', Georgia, serif;
+  --theme-font-heading: 'Playfair Display', Georgia, serif;
+  --theme-font-display: 'Playfair Display', Georgia, serif;
+  --theme-card-radius: 12px;
+  --theme-control-radius: 7px;
+  --theme-panel-shadow: 0 15px 38px rgba(90, 55, 39, .13), 0 2px 0 rgba(255, 255, 255, .38) inset;
+}
+:root[data-palette='academy'] body {
+  background-color: var(--page);
+  background-image:
+    linear-gradient(90deg, transparent 0 72px, color-mix(in srgb, var(--olive) 20%, transparent) 72px 74px, transparent 74px),
+    repeating-linear-gradient(0deg, transparent 0 31px, color-mix(in srgb, var(--olive) 9%, transparent) 31px 32px),
+    radial-gradient(circle at 92% 0%, var(--page-glow), transparent 35%);
+  background-attachment: fixed;
+}
+:root[data-palette='academy'] .section-heading h2 { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--olive) 35%, transparent); text-underline-offset: 8px; }
+
+/* Creative Atelier — watercolor washes, hand-lettered headings, soft canvas cards. */
+:root[data-palette='atelier'] {
+  --theme-font-body: 'Nunito Sans', sans-serif;
+  --theme-font-heading: 'Kalam', cursive;
+  --theme-font-display: 'Kalam', cursive;
+  --theme-card-radius: 24px 10px 26px 12px;
+  --theme-control-radius: 12px;
+  --theme-panel-shadow: 0 20px 55px rgba(68, 84, 79, .11);
+  --theme-panel-surface: color-mix(in srgb, var(--paper) 91%, transparent);
+}
+:root[data-palette='atelier'] body {
+  background-color: var(--page);
+  background-image:
+    radial-gradient(ellipse at 12% 10%, rgba(104, 163, 155, .22), transparent 28%),
+    radial-gradient(ellipse at 88% 16%, rgba(226, 166, 109, .2), transparent 25%),
+    radial-gradient(ellipse at 55% 100%, rgba(137, 124, 184, .17), transparent 32%),
+    repeating-linear-gradient(22deg, rgba(70, 64, 51, .018) 0 1px, transparent 1px 6px);
+  background-attachment: fixed;
+}
+:root[data-palette='atelier'] .section-heading h2 { font-size: 31px; transform: rotate(-.35deg); }
+
+/* Neon Quest — luminous gaming grid, high-energy display type, glowing modules. */
+:root[data-palette='neon'] {
+  --theme-font-body: 'Space Grotesk', sans-serif;
+  --theme-font-heading: 'Space Grotesk', sans-serif;
+  --theme-font-display: 'Space Grotesk', sans-serif;
+  --theme-card-radius: 18px;
+  --theme-control-radius: 8px;
+  --theme-panel-shadow: 0 0 0 1px color-mix(in srgb, var(--olive) 18%, transparent), 0 24px 70px rgba(94, 49, 145, .18);
+  --theme-panel-surface: color-mix(in srgb, var(--paper) 92%, transparent);
+}
+:root[data-palette='neon'] body {
+  background-color: var(--page);
+  background-image:
+    radial-gradient(circle at 85% 0%, rgba(206, 64, 255, .22), transparent 34%),
+    radial-gradient(circle at 0% 85%, rgba(54, 205, 255, .16), transparent 30%),
+    linear-gradient(color-mix(in srgb, var(--olive) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--olive) 7%, transparent) 1px, transparent 1px);
+  background-size: auto, auto, 44px 44px, 44px 44px;
+  background-attachment: fixed;
+}
+:root[data-palette='neon'] .brand-mark { box-shadow: 0 0 22px color-mix(in srgb, var(--olive) 50%, transparent); }
+:root[data-theme='dark'][data-palette='neon'] :is(.upload-card, .workspace-card, .chat-section, .summary-section, .quiz-section, .interview-section, .history-section) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--olive) 25%, transparent), 0 0 42px rgba(157, 73, 255, .13); }
+
+/* Dark mode uses bright, theme-specific accents instead of low-contrast dark green. */
+:root[data-theme='dark'] {
+  --olive: #d5b86f;
+  --olive-dark: #f0d28b;
+  --olive-soft: #443820;
+  --page: #181714;
+  --page-glow: rgba(222, 184, 102, .12);
+  --cream: #1d1b17;
+  --paper: #25221c;
+  --paper-raised: #2d2921;
+  --ink: #f7f1e4;
+  --muted: #c2b8a5;
+  --line: #51493b;
+  --focus: rgba(240, 210, 139, .42);
+  --selection: #6b5528;
+  --selection-ink: #fffaf0;
+  --accent-text: var(--olive-dark);
+  --on-accent: #201b12;
+}
+:root[data-theme='dark'][data-palette='terminal'] {
+  --olive: #70e0b2; --olive-dark: #a3f1d0; --olive-soft: #183c32;
+  --page: #08111c; --page-glow: rgba(70, 211, 168, .12); --cream: #0c1522;
+  --paper: #101a28; --paper-raised: #172535; --ink: #edf8f4; --muted: #a9bdb6;
+  --line: #345064; --focus: rgba(112, 224, 178, .42); --selection: #245f4d; --selection-ink: #f5fffb;
+}
+:root[data-theme='dark'][data-palette='daylight'] {
+  --olive: #b7c5bb; --olive-dark: #dde6df; --olive-soft: #3a423c;
+  --page: #161a18; --page-glow: rgba(190, 207, 194, .1); --cream: #1d211e;
+  --paper: #252a26; --paper-raised: #303631; --ink: #f5f7f3; --muted: #bdc5be;
+  --line: #4d554f; --focus: rgba(183, 197, 187, .4); --selection: #506057; --selection-ink: #fff;
+}
+:root[data-theme='dark'][data-palette='botanical'] {
+  --olive: #efa6c2; --olive-dark: #ffc5da; --olive-soft: #543044;
+  --page: #21191d; --page-glow: rgba(224, 116, 169, .14); --cream: #281e22;
+  --paper: #30242a; --paper-raised: #3a2b32; --ink: #fff1f4; --muted: #d3bac2;
+  --line: #604550; --focus: rgba(255, 166, 199, .42); --selection: #713e56; --selection-ink: #fff7fa;
+}
+:root[data-theme='dark'][data-palette='blueprint'] {
+  --olive: #72bce7; --olive-dark: #a8daf5; --olive-soft: #263f50;
+  --page: #0e1822; --page-glow: rgba(75, 157, 205, .14); --cream: #14202a;
+  --paper: #1a2935; --paper-raised: #223442; --ink: #f0f8fc; --muted: #aec5d0;
+  --line: #3c5868; --focus: rgba(113, 188, 231, .42); --selection: #315f79; --selection-ink: #fff;
+}
+:root[data-theme='dark'][data-palette='legal'] {
+  --olive: #d9a86c; --olive-dark: #f0c58d; --olive-soft: #513a25;
+  --page: #1c1612; --page-glow: rgba(212, 151, 80, .11); --cream: #241d18;
+  --paper: #2c231d; --paper-raised: #362a22; --ink: #fbefe0; --muted: #cbb8a5;
+  --line: #5b493a; --focus: rgba(217, 168, 108, .42); --selection: #6a492c; --selection-ink: #fffaf2;
+}
+:root[data-theme='dark'][data-palette='academy'] {
+  --olive: #ef8f78; --olive-dark: #ffb09e; --olive-soft: #573129;
+  --page: #1d1614; --page-glow: rgba(225, 103, 81, .12); --cream: #251c19;
+  --paper: #2e231f; --paper-raised: #382a25; --ink: #fff0e8; --muted: #cfb7ae;
+  --line: #5d453c; --focus: rgba(239, 143, 120, .42); --selection: #704036; --selection-ink: #fff8f5;
+}
+:root[data-theme='dark'][data-palette='atelier'] {
+  --olive: #83ccec; --olive-dark: #b5e4f7; --olive-soft: #284456;
+  --page: #17191b; --page-glow: rgba(100, 181, 215, .11); --cream: #1e2022;
+  --paper: #282a2c; --paper-raised: #303438; --ink: #f4f2ed; --muted: #bdc0c0;
+  --line: #484f53; --focus: rgba(131, 204, 236, .4); --selection: #345d70; --selection-ink: #fff;
+}
+:root[data-theme='dark'][data-palette='neon'] {
+  --olive: #bf8dff; --olive-dark: #dfc1ff; --olive-soft: #462c61;
+  --page: #0e091b; --page-glow: rgba(188, 72, 255, .2); --cream: #151024;
+  --paper: #1d172f; --paper-raised: #291e40; --ink: #f8efff; --muted: #c8b8dc;
+  --line: #513b70; --focus: rgba(191, 141, 255, .46); --selection: #6a3ba0; --selection-ink: #fff;
+}
+
+:root[data-theme='dark'] :is(.brand-mark, .profile-avatar, .drop-icon, .youtube-row button, .submit-upload, .extract-button, .chat-compose button, .quiz-controls button, .quiz-submit, .start-interview-btn, .send-response-btn, .generate-report-btn, .guide-num, .pill-badge.role, .interview-msg-row.candidate .interview-msg-avatar) {
+  color: var(--on-accent);
+  background: var(--olive);
+}
+:root[data-theme='dark'] :is(.brand-accent, .eyebrow, .card-kicker, h1 span, .upload-message.success, .history-open h3, .history-tabs button.selected, .quiz-explanation strong, .markdown-answer a, .content-unit-heading, .video-chat-scope strong, .citation-chip) { color: var(--accent-text); }
+:root[data-theme='dark'] :is(.upload-message.uploading, .upload-message.queued, .upload-message.processing, .accepted-answer, .step-number, .chat-empty span) { color: var(--accent-text); }
+:root[data-theme='dark'] :is(.upload-icon, .file-type-badge) {
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--olive-soft) 74%, var(--paper-raised));
+}
+:root[data-theme='dark'] :is(.source-option input, .video-chat-scope input, .quiz-option input) { accent-color: var(--olive); }
+:root[data-theme='dark'] :is(.progress-track div, .thinking-dots span) { background: var(--olive); }
+:root[data-theme='dark'] .progress-track { background: color-mix(in srgb, var(--paper-raised) 80%, var(--line)); }
+:root[data-theme='dark'] .history-tabs button.selected { border-color: var(--olive); }
+:root[data-theme='dark'] .visual-insight { border-left-color: var(--olive); }
+:root[data-theme='dark'] .citation-highlight {
+  background: color-mix(in srgb, var(--olive-soft) 68%, var(--paper-raised));
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--olive) 16%, transparent);
+}
+:root[data-theme='dark'] .loading-spinner { border-color: var(--line); border-top-color: var(--olive); }
+:root[data-theme='dark'] :is(.source-option:hover, .chat-message, .admin-user dl div, .visual-insight, .auth-mode-tab.active, .guide-card, .report-pillar-card, .report-pillar-card.strengths, .report-pillar-card.improvements, .report-pillar-card.recommendations) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper-raised) 84%, var(--olive-soft));
+}
+:root[data-theme='dark'] :is(.chat-message.user, .quiz-option.correct, .quiz-score, .history-status.ready, .interview-completed-banner) {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--olive) 34%, var(--line));
+  background: color-mix(in srgb, var(--olive-soft) 72%, var(--paper-raised));
+}
+:root[data-theme='dark'] :is(.welcome-book, .upload-card, .report-hero-card) {
+  color: var(--ink);
+  border-color: var(--line);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--paper-raised) 90%, var(--olive-soft)), var(--paper));
+}
+:root[data-theme='dark'] :is(.interview-msg-row.interviewer .interview-msg-bubble, .interview-msg-row.candidate .interview-msg-bubble) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--paper-raised) 88%, var(--olive-soft));
+}
+:root[data-theme='dark'] input::placeholder,
+:root[data-theme='dark'] textarea::placeholder { color: color-mix(in srgb, var(--muted) 82%, transparent); }
+
+@media (max-width: 720px) {
+  :root[data-palette='legal'] body,
+  :root[data-palette='academy'] body { background-position: -46px 0, 0 0; }
+  :root[data-palette='blueprint'] { --theme-panel-shadow: 4px 4px 0 color-mix(in srgb, var(--olive) 12%, transparent); }
+  :root[data-palette='atelier'] .section-heading h2 { font-size: 27px; }
+}
