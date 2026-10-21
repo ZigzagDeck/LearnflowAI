@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DragEvent, FormEvent, KeyboardEvent } from 'react'
+import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
@@ -179,6 +179,18 @@ function BookLogo({ small = false }: { small?: boolean }) {
   )
 }
 
+function SectionGlyph({ kind }: { kind: WorkspaceView }) {
+  const paths: Record<WorkspaceView, ReactNode> = {
+    materials: <><path d="M4 7.5 12 4l8 3.5v10L12 21l-8-3.5z" /><path d="M12 4v17M4 7.5l8 3.5 8-3.5" /></>,
+    chat: <><path d="M4 5.5h16v11H9l-5 4z" /><path d="M8 10h8M8 13h5" /></>,
+    summary: <><path d="M6 3.5h9l3 3v14H6zM15 3.5v3h3M9 11h6M9 14h6M9 17h4" /></>,
+    quiz: <><path d="M8.5 4h11v16h-15V8zM8.5 4v4h-4" /><path d="m8 13 2 2 4-4M15.5 14h1.5" /></>,
+    interview: <><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" /></>,
+    history: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2M3.5 5.5 2 7" /></>,
+  }
+  return <span className={`section-glyph ${kind}`} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[kind]}</svg></span>
+}
+
 function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   const nextTheme = theme === 'light' ? 'dark' : 'light'
   return (
@@ -213,6 +225,29 @@ function PalettePicker({ palette, onChange }: { palette: Palette; onChange: (pal
         {PALETTES.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
       </select>
     </label>
+  )
+}
+
+function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit, onToggle, disabled = false }: {
+  title: string
+  availableIds: string[]
+  selectedIds: string[]
+  totalCount: number
+  limit: number
+  onToggle: (select: boolean) => void
+  disabled?: boolean
+}) {
+  const allSelected = availableIds.length > 0 && availableIds.every((id) => selectedIds.includes(id))
+  return (
+    <div className="source-picker-header">
+      <div>
+        <h3>{title}</h3>
+        <span>{selectedIds.length} selected · max {limit}</span>
+      </div>
+      <button type="button" className="source-toggle-all" onClick={() => onToggle(!allSelected)} disabled={disabled || availableIds.length === 0}>
+        {allSelected ? 'Unselect all' : availableIds.length < totalCount ? `Select first ${availableIds.length}` : 'Select all'}
+      </button>
+    </div>
   )
 }
 
@@ -507,6 +542,7 @@ function App() {
   const [interviewJobDesc, setInterviewJobDesc] = useState('')
   const [interviewResume, setInterviewResume] = useState('')
   const [interviewSourceIds, setInterviewSourceIds] = useState<string[]>([])
+  const sourceDefaultsInitialized = useRef(false)
   const [interviewType, setInterviewType] = useState('mixed')
   const [interviewQuestionCount, setInterviewQuestionCount] = useState(5)
   const [interviewSession, setInterviewSession] = useState<InterviewSession | null>(null)
@@ -585,6 +621,9 @@ function App() {
     setChatSourceIds([])
     setChatVideoScopes({})
     setQuizSourceIds([])
+    setSummarySourceIds([])
+    setInterviewSourceIds([])
+    sourceDefaultsInitialized.current = false
     setQuiz(null)
     setQuizAnswers({})
     setQuizResult(null)
@@ -659,15 +698,19 @@ function App() {
       const nextMaterials: MaterialRecord[] = materialsPayload.materials || []
       setMaterials(nextMaterials)
       setChatSessions(chatsPayload.sessions || [])
-      setChatSourceIds((current) => current.length
-        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
-        : nextMaterials.filter((item) => item.status === 'ready' && item.source_type !== 'video').map((item) => item.resource_id))
-      setQuizSourceIds((current) => current.length
-        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
-        : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
-      setSummarySourceIds((current) => current.length
-        ? current.filter((id) => nextMaterials.some((item) => item.resource_id === id && item.status === 'ready'))
-        : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
+      const ready = nextMaterials.filter((item) => item.status === 'ready')
+      if (!sourceDefaultsInitialized.current) {
+        setChatSourceIds(ready.filter((item) => item.source_type !== 'video').slice(0, 30).map((item) => item.resource_id))
+        setQuizSourceIds(ready.slice(0, 12).map((item) => item.resource_id))
+        setSummarySourceIds(ready.slice(0, 12).map((item) => item.resource_id))
+        sourceDefaultsInitialized.current = ready.length > 0
+      } else {
+        const readyIds = new Set(ready.map((item) => item.resource_id))
+        setChatSourceIds((current) => current.filter((id) => readyIds.has(id)))
+        setQuizSourceIds((current) => current.filter((id) => readyIds.has(id)))
+        setSummarySourceIds((current) => current.filter((id) => readyIds.has(id)))
+        setInterviewSourceIds((current) => current.filter((id) => readyIds.has(id)))
+      }
       setHistoryMessage('')
     } catch (error) {
       setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded. Please refresh.')
@@ -746,6 +789,27 @@ function App() {
         return next
       })
     }
+  }
+
+  const readyMaterials = materials.filter((item) => item.status === 'ready')
+  const chatBulkMaterials = readyMaterials.filter((item) => item.source_type !== 'video').slice(0, 30)
+  const chatVideoSlots = Math.min(10, 30 - chatBulkMaterials.length)
+  chatBulkMaterials.push(...readyMaterials.filter((item) => item.source_type === 'video').slice(0, chatVideoSlots))
+  const summaryBulkIds = readyMaterials.slice(0, 12).map((item) => item.resource_id)
+  const quizBulkIds = summaryBulkIds
+  const interviewBulkIds = readyMaterials.slice(0, 5).map((item) => item.resource_id)
+
+  const toggleAllChatSources = (select: boolean) => {
+    if (!select) {
+      setChatSourceIds([])
+      setChatVideoScopes({})
+    } else {
+      const selectedIds = chatBulkMaterials.map((item) => item.resource_id)
+      setChatSourceIds(selectedIds)
+      chatBulkMaterials.filter((item) => item.source_type === 'video' && !chatSourceIds.includes(item.resource_id))
+        .forEach((item) => void loadVideoScope(item.resource_id))
+    }
+    setChatError('')
   }
 
   const selectFile = (file: File) => {
@@ -1518,7 +1582,7 @@ function App() {
         <section className="dashboard-grid workspace-page" id="workspace" hidden={activeView !== 'materials'}>
           <article className={`upload-card ${isDragging ? 'is-dragging' : ''}`}>
             <div className="card-heading">
-              <div className="icon-badge upload-icon" aria-hidden="true">↑</div>
+              <SectionGlyph kind="materials" />
               <div>
                 <p className="card-kicker">START HERE</p>
                 <h2>Add your first material</h2>
@@ -1632,10 +1696,10 @@ function App() {
 
           <article className="workspace-card" id="workspace-content">
             <div className="workspace-header">
-              <div>
+              <div className="section-title"><SectionGlyph kind="materials" /><div>
                 <p className="card-kicker">LEARNING WORKSPACE</p>
                 <h2>Your space is ready</h2>
-              </div>
+              </div></div>
               <span className="status-pill"><span /> {extractedContent.length > 0 ? 'Content ready' : 'Empty'}</span>
             </div>
             {extractedContent.length > 0 ? (
@@ -1669,18 +1733,19 @@ function App() {
 
         <section className="chat-section workspace-page" id="chat" hidden={activeView !== 'chat'}>
           <div className="section-heading">
-            <div><p className="eyebrow">GROUNDED STUDY HELP</p><h2>Ask about your materials</h2></div>
+            <div className="section-title"><SectionGlyph kind="chat" /><div><p className="eyebrow">GROUNDED STUDY HELP</p><h2>Ask about your materials</h2></div></div>
             <button className="secondary-button" type="button" onClick={startNewChat}>New chat</button>
           </div>
           <div className="chat-layout">
             <aside className="source-picker">
-              <h3>Use ready materials</h3>
-              {materials.filter((item) => item.status === 'ready').length ? (
-                materials.filter((item) => item.status === 'ready').map((material) => (
-                  <label className="source-option" key={material.resource_id}>
+              <SelectionToolbar title="Use ready materials" availableIds={chatBulkMaterials.map((item) => item.resource_id)} selectedIds={chatSourceIds} totalCount={readyMaterials.length} limit={30} onToggle={toggleAllChatSources} />
+              {readyMaterials.length ? (
+                readyMaterials.map((material) => (
+                  <label className={`source-option${chatSourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
                     <input
                       type="checkbox"
                       checked={chatSourceIds.includes(material.resource_id)}
+                      disabled={!chatSourceIds.includes(material.resource_id) && (chatSourceIds.length >= 30 || (material.source_type === 'video' && readyMaterials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id)).length >= 10))}
                       onChange={(event) => updateChatSource(material, event.target.checked)}
                     />
                     {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
@@ -1719,7 +1784,7 @@ function App() {
                     {item.citations.length > 0 && renderCitations(item.citations)}
                   </article>
                 )) : (
-                  <div className="chat-empty"><span aria-hidden="true">✦</span><h3>Start with a question</h3><p>Answers use only the ready materials you select.</p></div>
+                  <div className="chat-empty"><SectionGlyph kind="chat" /><h3>Start with a question</h3><p>Answers use only the ready materials you select.</p></div>
                 )}
                 {chatBusy && <article className="chat-message assistant thinking-message"><strong>LearnFlow AI</strong><div className="thinking-dots" aria-label="Reading selected materials and composing an answer"><span /><span /><span /></div><small>Reading your selected sources and checking citations…</small></article>}
               </div>
@@ -1743,14 +1808,14 @@ function App() {
 
         <section className="summary-section workspace-page" id="summary" hidden={activeView !== 'summary'}>
           <div className="section-heading">
-            <div><p className="eyebrow">GROUNDED OVERVIEW</p><h2>Summarize your materials</h2></div>
+            <div className="section-title"><SectionGlyph kind="summary" /><div><p className="eyebrow">GROUNDED OVERVIEW</p><h2>Summarize your materials</h2></div></div>
             {summaryResult && <button className="secondary-button" type="button" onClick={() => { setSummaryResult(null); setSummaryError('') }}>Clear summary</button>}
           </div>
           <div className="summary-layout">
             <aside className="source-picker">
-              <h3>Summary materials</h3>
-              {materials.filter((item) => item.status === 'ready').length ? materials.filter((item) => item.status === 'ready').map((material) => (
-                <label className="source-option" key={material.resource_id}>
+              <SelectionToolbar title="Summary materials" availableIds={summaryBulkIds} selectedIds={summarySourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => setSummarySourceIds(select ? summaryBulkIds : [])} disabled={summaryBusy} />
+              {readyMaterials.length ? readyMaterials.map((material) => (
+                <label className={`source-option${summarySourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
                   <input
                     type="checkbox"
                     checked={summarySourceIds.includes(material.resource_id)}
@@ -1778,22 +1843,22 @@ function App() {
               {summaryError && <p className="history-alert" role="alert">{summaryError}</p>}
               {summaryBusy && <div className="summary-loading"><div className="thinking-dots" aria-hidden="true"><span /><span /><span /></div><p>Building a grounded summary from your selected sources…</p></div>}
               {!summaryBusy && summaryResult && <><MarkdownAnswer>{summaryResult.summary}</MarkdownAnswer>{renderCitations(summaryResult.citations)}</>}
-              {!summaryBusy && !summaryResult && <div className="chat-empty"><span aria-hidden="true">≡</span><h3>Create a source-backed summary</h3><p>Choose your materials and the level of detail you need.</p></div>}
+              {!summaryBusy && !summaryResult && <div className="chat-empty"><SectionGlyph kind="summary" /><h3>Create a source-backed summary</h3><p>Choose your materials and the level of detail you need.</p></div>}
             </article>
           </div>
         </section>
 
         <section className="quiz-section workspace-page" id="quiz" hidden={activeView !== 'quiz'}>
           <div className="section-heading">
-            <div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div>
+            <div className="section-title"><SectionGlyph kind="quiz" /><div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div></div>
             <button className="secondary-button" type="button" onClick={startNewQuiz}>New quiz</button>
           </div>
           <div className="quiz-layout">
             <aside className="source-picker">
-              <h3>Quiz materials</h3>
-              {materials.filter((item) => item.status === 'ready').length ? (
-                materials.filter((item) => item.status === 'ready').map((material) => (
-                  <label className="source-option" key={material.resource_id}>
+              <SelectionToolbar title="Quiz materials" availableIds={quizBulkIds} selectedIds={quizSourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => setQuizSourceIds(select ? quizBulkIds : [])} disabled={quizBusy} />
+              {readyMaterials.length ? (
+                readyMaterials.map((material) => (
+                  <label className={`source-option${quizSourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
                     <input
                       type="checkbox"
                       checked={quizSourceIds.includes(material.resource_id)}
@@ -1904,7 +1969,7 @@ function App() {
                   )}
                 </>
               ) : (
-                <div className="chat-empty"><span aria-hidden="true">✓</span><h3>Build a grounded quiz</h3><p>Select ready materials and choose how many questions you want.</p></div>
+                <div className="chat-empty"><SectionGlyph kind="quiz" /><h3>Build a grounded quiz</h3><p>Select ready materials and choose how many questions you want.</p></div>
               )}
             </div>
           </div>
@@ -1912,10 +1977,10 @@ function App() {
 
         <section className="interview-section workspace-page" id="interview" hidden={activeView !== 'interview'}>
           <div className="section-heading">
-            <div>
+            <div className="section-title"><SectionGlyph kind="interview" /><div>
               <p className="eyebrow">AI MOCK INTERVIEW & PREPARATION</p>
               <h2>Realistic Interview Practice</h2>
-            </div>
+            </div></div>
             {(interviewSession || interviewReport) && (
               <button
                 className="secondary-button"
@@ -2025,21 +2090,23 @@ function App() {
                   />
                 </div>
 
-                {materials.length > 0 && (
+                {readyMaterials.length > 0 && (
                   <div className="interview-form-group">
-                    <label>
+                    <div className="interview-material-heading">
                       <strong>Link Library Materials (Optional)</strong>
                       <span className="field-hint">AI will incorporate concepts from your uploaded study materials</span>
-                    </label>
+                    </div>
                     <div className="interview-material-selector">
-                      {materials.filter((m) => m.status === 'ready').map((mat) => (
-                        <label key={mat.resource_id} className="interview-mat-option">
+                      <SelectionToolbar title="Ready materials" availableIds={interviewBulkIds} selectedIds={interviewSourceIds} totalCount={readyMaterials.length} limit={5} onToggle={(select) => setInterviewSourceIds(select ? interviewBulkIds : [])} disabled={interviewBusy} />
+                      {readyMaterials.map((mat) => (
+                        <label key={mat.resource_id} className={`interview-mat-option${interviewSourceIds.includes(mat.resource_id) ? ' selected' : ''}`}>
                           <input
                             type="checkbox"
                             checked={interviewSourceIds.includes(mat.resource_id)}
+                            disabled={interviewBusy || (!interviewSourceIds.includes(mat.resource_id) && interviewSourceIds.length >= 5)}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                setInterviewSourceIds((prev) => [...prev, mat.resource_id])
+                                setInterviewSourceIds((prev) => [...new Set([...prev, mat.resource_id])].slice(0, 5))
                               } else {
                                 setInterviewSourceIds((prev) => prev.filter((id) => id !== mat.resource_id))
                               }
@@ -2296,7 +2363,7 @@ function App() {
 
         <section className="history-section workspace-page" id="history" hidden={activeView !== 'history'}>
           <div className="section-heading">
-            <div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div>
+            <div className="section-title"><SectionGlyph kind="history" /><div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div></div>
             <button className="secondary-button" type="button" onClick={() => void loadHistories()} disabled={historyBusy}>
               {historyBusy ? 'Refreshing…' : 'Refresh history'}
             </button>
