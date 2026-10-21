@@ -444,6 +444,31 @@ class ResourceStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS interview_sessions (
+                    interview_id TEXT PRIMARY KEY,
+                    owner_user_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    job_role TEXT NOT NULL,
+                    job_description TEXT NOT NULL DEFAULT '',
+                    resume_text TEXT NOT NULL DEFAULT '',
+                    material_context TEXT NOT NULL DEFAULT '',
+                    question_count INTEGER NOT NULL DEFAULT 5,
+                    interview_type TEXT NOT NULL DEFAULT 'mixed',
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    history_json TEXT NOT NULL DEFAULT '[]',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    report_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_interview_sessions_owner_updated "
+                "ON interview_sessions(owner_user_id, updated_at DESC)"
+            )
 
     @staticmethod
     def _record(row: sqlite3.Row | None) -> ResourceRecord | None:
@@ -2086,3 +2111,142 @@ class ResourceStore:
             return len(resource_ids)
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not recover interrupted processing.") from exc
+
+    # ------------------------------------------------------------------
+    # Interview session persistence
+    # ------------------------------------------------------------------
+
+    def save_interview_session(
+        self,
+        *,
+        interview_id: str,
+        user_id: str,
+        session_id: str,
+        job_role: str,
+        job_description: str,
+        resume_text: str,
+        material_context: str,
+        question_count: int,
+        interview_type: str,
+        system_prompt: str,
+        history: list,
+        status: str,
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO interview_sessions (
+                        interview_id, owner_user_id, session_id, job_role,
+                        job_description, resume_text, material_context,
+                        question_count, interview_type, system_prompt,
+                        history_json, status, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        interview_id, user_id, session_id, job_role,
+                        job_description, resume_text, material_context,
+                        question_count, interview_type, system_prompt,
+                        json.dumps(history), status, now, now,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not save interview session.") from exc
+
+    def get_interview_session(self, interview_id: str, user_id: str) -> dict | None:
+        try:
+            with self._connect() as connection:
+                row = connection.execute(
+                    "SELECT * FROM interview_sessions WHERE interview_id=? AND owner_user_id=?",
+                    (interview_id, user_id),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not fetch interview session.") from exc
+        if row is None:
+            return None
+        return {
+            "interview_id": row["interview_id"],
+            "session_id": row["session_id"],
+            "job_role": row["job_role"],
+            "job_description": row["job_description"],
+            "resume_text": row["resume_text"],
+            "material_context": row["material_context"],
+            "question_count": row["question_count"],
+            "interview_type": row["interview_type"],
+            "system_prompt": row["system_prompt"],
+            "history": json.loads(row["history_json"] or "[]"),
+            "status": row["status"],
+            "report": json.loads(row["report_json"]) if row["report_json"] else None,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def update_interview_session(
+        self,
+        *,
+        interview_id: str,
+        user_id: str,
+        history: list,
+        status: str,
+        report: dict | None = None,
+    ) -> None:
+        now = datetime.now(UTC).isoformat()
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    UPDATE interview_sessions
+                    SET history_json=?, status=?, report_json=?, updated_at=?
+                    WHERE interview_id=? AND owner_user_id=?
+                    """,
+                    (
+                        json.dumps(history),
+                        status,
+                        json.dumps(report) if report is not None else None,
+                        now,
+                        interview_id,
+                        user_id,
+                    ),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not update interview session.") from exc
+
+    def list_interview_sessions(self, user_id: str) -> list[dict]:
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT interview_id, job_role, interview_type, question_count,
+                           status, created_at, updated_at
+                    FROM interview_sessions
+                    WHERE owner_user_id=?
+                    ORDER BY updated_at DESC
+                    LIMIT 50
+                    """,
+                    (user_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not list interview sessions.") from exc
+        return [
+            {
+                "interview_id": row["interview_id"],
+                "job_role": row["job_role"],
+                "interview_type": row["interview_type"],
+                "question_count": row["question_count"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def delete_interview_session(self, interview_id: str, user_id: str) -> None:
+        try:
+            with self._connect() as connection:
+                connection.execute(
+                    "DELETE FROM interview_sessions WHERE interview_id=? AND owner_user_id=?",
+                    (interview_id, user_id),
+                )
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not delete interview session.") from exc

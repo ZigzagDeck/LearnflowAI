@@ -153,8 +153,11 @@ def test_failed_provider_returns_unavailable_error():
         )
 
 
-def test_chat_api_is_fail_closed_when_service_is_not_configured():
-    with TestClient(app) as client:
+def test_chat_api_is_fail_closed_when_service_is_not_configured(configure_local_services):
+    with TestClient(
+        app,
+        headers={"Authorization": f"Bearer {configure_local_services['token']}"},
+    ) as client:
         response = client.post(
             "/chat", json=request().model_dump(mode="json")
         )
@@ -162,8 +165,11 @@ def test_chat_api_is_fail_closed_when_service_is_not_configured():
     assert response.json()["detail"] == "Chat integrations are not configured."
 
 
-def test_chat_api_rejects_missing_playback_timestamp():
-    with TestClient(app) as client:
+def test_chat_api_rejects_missing_playback_timestamp(configure_local_services):
+    with TestClient(
+        app,
+        headers={"Authorization": f"Bearer {configure_local_services['token']}"},
+    ) as client:
         response = client.post(
             "/chat", json={
                 "session_id": "s1", "question": "What?", "allowed_source_ids": ["video1"],

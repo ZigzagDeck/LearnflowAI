@@ -1,9 +1,11 @@
 # LearnFlowAI — Full Engineering Journey and Architecture Report
 
 **Report date:** 21 October 2026  
-**Repository:** `saumyayadav2603-dot/LearnflowAI`  
+**Repository:** `ZigzagDeck/LearnflowAI`
 **Implementation branch:** `vm`  
 **Code snapshot reviewed:** `24e97c7` (`feat: add grounded server-scored quizzes`)
+
+> This is a historical engineering snapshot. The root `README.md` is the current source of truth for features, setup, deployment, and remaining scope.
 
 ## 1. Purpose and evidence basis
 
@@ -569,13 +571,13 @@ Priority order:
 7. **Improve visual understanding separately from OCR.** Diagrams and algorithm flows may require a multimodal description stage. Model-derived descriptions must be labeled as such and retain their page/slide reference.
 8. **Add quiz-history management if needed.** Quiz attempts are persisted but do not yet have a history/cleanup UI equivalent to chat and processed data.
 9. **Add retention and backup policies.** Define when uploads, transcripts, chats, quizzes, and provider usage records are deleted or backed up.
-10. **Update stale historical documentation.** Some earlier integration documents describe pre-integration states. `README.md`, `docs/START_HERE.md`, and this report should be treated as the primary current guides.
+10. **Keep operational documentation current.** The consolidated `README.md` is the primary setup and deployment guide; this report remains a milestone record.
 
 ## 15. Recommended demonstration sequence
 
 For a reliable hackathon demonstration:
 
-1. Start the API, worker, and frontend using `docs/START_HERE.md`.
+1. Start the API, worker, and frontend using the root `README.md`.
 2. Show `/usage/ocr`, `/usage/embeddings`, and `/usage/bedrock` to prove the selected providers and limits.
 3. Upload one digital PDF containing text and one page with an image or scan.
 4. Show processing progress and page-level extracted/OCR provenance.

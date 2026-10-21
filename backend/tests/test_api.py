@@ -20,9 +20,12 @@ class EmptyOCR:
 
 
 @pytest.fixture()
-def client(monkeypatch, tmp_path):
+def client(monkeypatch, tmp_path, configure_local_services):
     monkeypatch.setattr(backend_main, "UPLOAD_DIR", tmp_path)
-    with TestClient(backend_main.app) as api:
+    with TestClient(
+        backend_main.app,
+        headers={"Authorization": f"Bearer {configure_local_services['token']}"},
+    ) as api:
         yield api
 
 

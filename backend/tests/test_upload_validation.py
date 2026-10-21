@@ -16,9 +16,12 @@ class EmptyOCR:
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch):
+def client(tmp_path, monkeypatch, configure_local_services):
     monkeypatch.setattr(api, "UPLOAD_DIR", tmp_path)
-    return TestClient(api.app), tmp_path
+    return TestClient(
+        api.app,
+        headers={"Authorization": f"Bearer {configure_local_services['token']}"},
+    ), tmp_path
 
 
 def post(client, filename, data):

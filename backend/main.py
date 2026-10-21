@@ -25,6 +25,8 @@ from .quiz_api import router as quiz_router
 from .quiz_integration import build_local_bedrock_quiz_service
 from .summary_api import router as summary_router
 from .summary_integration import build_local_bedrock_summary_service
+from .interview_api import router as interview_router
+from .interview_integration import build_local_bedrock_interview_service
 from .contracts import YouTubeImportRequest
 from .config import (
     CHUNKING_PIPELINE_VERSION,
@@ -91,6 +93,7 @@ async def lifespan(application: FastAPI):
         )
         application.state.quiz_service = build_local_bedrock_quiz_service(store)
         application.state.summary_service = build_local_bedrock_summary_service(store)
+        application.state.interview_service = build_local_bedrock_interview_service(store)
     yield
 
 
@@ -101,6 +104,7 @@ app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(quiz_router)
 app.include_router(summary_router)
+app.include_router(interview_router)
 
 app.add_middleware(
     CORSMiddleware,

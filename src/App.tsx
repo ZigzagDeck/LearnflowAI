@@ -9,6 +9,15 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024
 const ACCEPTED_EXTENSIONS = ['.pdf', '.pptx', '.png', '.jpg', '.jpeg']
 const ACCEPTED_FILE_TYPES = ACCEPTED_EXTENSIONS.join(',')
 const AUTH_STORAGE_KEY = 'learnflow.auth.token'
+const THEME_STORAGE_KEY = 'learnflow.theme'
+
+type Theme = 'light' | 'dark'
+
+function getInitialTheme(): Theme {
+  const saved = window.localStorage.getItem(THEME_STORAGE_KEY)
+  if (saved === 'light' || saved === 'dark') return saved
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 type UserProfile = {
   user_id: string
@@ -136,6 +145,30 @@ function BookLogo({ small = false }: { small?: boolean }) {
   )
 }
 
+function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+  const nextTheme = theme === 'light' ? 'dark' : 'light'
+  return (
+    <button
+      className="theme-toggle"
+      type="button"
+      onClick={onToggle}
+      aria-label={`Switch to ${nextTheme} mode`}
+      title={`Switch to ${nextTheme} mode`}
+    >
+      {theme === 'light' ? (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.7 8.7 0 1 0 20.2 15.4Z" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 function MarkdownAnswer({ children }: { children: string }) {
   return (
     <div className="markdown-answer">
@@ -159,6 +192,37 @@ type QuizResult = {
 type SummaryResult = {
   summary: string
   citations: ChatMessage['citations']
+}
+
+type InterviewMessage = {
+  role: 'interviewer' | 'candidate'
+  content: string
+  timestamp: string
+}
+
+type InterviewReport = {
+  overall_score: number
+  summary: string
+  strengths: string[]
+  areas_for_improvement: string[]
+  recommendations: string[]
+  questions: Array<{
+    question: string
+    user_answer: string
+    score: number
+    feedback: string
+    ideal_answer_hint: string
+  }>
+}
+
+type InterviewSession = {
+  interview_id: string
+  status: 'active' | 'completed' | 'reported'
+  questions_asked: number
+  question_count: number
+  job_role: string
+  interview_type: string
+  created_at?: string
 }
 
 function formatFileSize(bytes: number) {
@@ -185,11 +249,20 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
-function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user: UserProfile) => void }) {
+function AuthScreen({
+  onAuthenticated,
+  theme,
+  onToggleTheme,
+}: {
+  onAuthenticated: (token: string, user: UserProfile) => void
+  theme: Theme
+  onToggleTheme: () => void
+}) {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -207,10 +280,17 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
           : { email, display_name: displayName, password }),
       })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'Authentication failed.')
+      if (!response.ok) {
+        const msg = payload.detail || ''
+        if (response.status === 401 || msg.toLowerCase().includes('invalid')) throw new Error('Incorrect email or password. Please try again.')
+        if (response.status === 409 || msg.toLowerCase().includes('exist')) throw new Error('An account with this email already exists. Try signing in.')
+        if (response.status === 422 || msg.toLowerCase().includes('password')) throw new Error('Password must be at least 8 characters with one uppercase letter and one number.')
+        if (response.status === 429) throw new Error('Too many attempts. Please wait a moment and try again.')
+        throw new Error(msg || 'Something went wrong. Please try again.')
+      }
       onAuthenticated(payload.token, payload.user)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Authentication failed.')
+      setError(reason instanceof Error ? reason.message : 'Something went wrong. Please try again.')
     } finally {
       setBusy(false)
     }
@@ -218,23 +298,95 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
 
   return (
     <main className="auth-shell">
+      <div className="auth-theme-toggle"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></div>
       <section className="auth-card">
-        <BookLogo small />
-        <p className="eyebrow">YOUR PRIVATE STUDY SPACE</p>
-        <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
-        <p>Sign in to keep materials, transcripts, conversations, and quizzes separated by account.</p>
+        <div className="auth-logo-row">
+          <BookLogo small />
+          <div>
+            <p className="eyebrow">YOUR PERSONAL STUDY SPACE</p>
+            <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          </div>
+        </div>
+        <p className="auth-tagline">
+          {mode === 'login'
+            ? 'Sign in to access your materials, conversations, quizzes, and mock interviews.'
+            : 'Join to upload study materials, ask questions, practice with quizzes, and prepare for interviews.'}
+        </p>
+
+        <div className="auth-mode-tabs" role="tablist">
+          <button
+            type="button"
+            className={`auth-mode-tab ${mode === 'login' ? 'active' : ''}`}
+            onClick={() => { setMode('login'); setError('') }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            className={`auth-mode-tab ${mode === 'register' ? 'active' : ''}`}
+            onClick={() => { setMode('register'); setError('') }}
+          >
+            Create Account
+          </button>
+        </div>
+
         <form onSubmit={(event) => void submit(event)}>
           {mode === 'register' && (
-            <label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} autoComplete="name" required /></label>
+            <label>
+              <span>Your name</span>
+              <input
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                autoComplete="name"
+                placeholder="e.g. Alex Smith"
+                required
+              />
+            </label>
           )}
-          <label>Email<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label>
-          <label>Password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required /></label>
-          {mode === 'register' && <small>Use at least 8 characters, one uppercase letter, and one number.</small>}
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <button type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+          <label>
+            <span>Email address</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="email"
+              placeholder="you@example.com"
+              required
+            />
+          </label>
+          <label>
+            <span>Password</span>
+            <div className="password-input-wrap">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                placeholder={mode === 'register' ? 'Min. 8 chars, 1 uppercase, 1 number' : '••••••••'}
+                required
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </label>
+          {error && <p className="form-error" role="alert">⚠ {error}</p>}
+          <button type="submit" disabled={busy} className="auth-submit">
+            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in →' : 'Create account →'}
+          </button>
         </form>
-        <button className="auth-switch" type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
-          {mode === 'login' ? 'New here? Create an account' : 'Already registered? Sign in'}
+        <button
+          className="auth-switch"
+          type="button"
+          onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}
+        >
+          {mode === 'login' ? "Don't have an account yet? Create one here" : 'Already have an account? Sign in here'}
         </button>
       </section>
     </main>
@@ -242,6 +394,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
 }
 
 function App() {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
   const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [authReady, setAuthReady] = useState(() => !window.localStorage.getItem(AUTH_STORAGE_KEY))
@@ -288,20 +441,41 @@ function App() {
   const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null)
   const [summaryBusy, setSummaryBusy] = useState(false)
   const [summaryError, setSummaryError] = useState('')
-  const [historyTab, setHistoryTab] = useState<'processed' | 'chat'>('processed')
+  const [historyTab, setHistoryTab] = useState<'processed' | 'chat' | 'interview'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
   const [ocrRuntime, setOcrRuntime] = useState<OcrRuntime | null>(null)
   const [bedrockRuntime, setBedrockRuntime] = useState<BedrockRuntime | null>(null)
-  const ocrProviderLabel = ocrRuntime?.provider === 'google_document_ai'
-    ? 'Google Document AI'
-    : ocrRuntime?.provider === 'rapidocr' ? 'RapidOCR' : 'configured provider'
+  // Interview state
+  const [interviewJobRole, setInterviewJobRole] = useState('')
+  const [interviewJobDesc, setInterviewJobDesc] = useState('')
+  const [interviewResume, setInterviewResume] = useState('')
+  const [interviewSourceIds, setInterviewSourceIds] = useState<string[]>([])
+  const [interviewType, setInterviewType] = useState('mixed')
+  const [interviewQuestionCount, setInterviewQuestionCount] = useState(5)
+  const [interviewSession, setInterviewSession] = useState<InterviewSession | null>(null)
+  const [interviewMessages, setInterviewMessages] = useState<InterviewMessage[]>([])
+  const [interviewInput, setInterviewInput] = useState('')
+  const [interviewBusy, setInterviewBusy] = useState(false)
+  const [interviewError, setInterviewError] = useState('')
+  const [interviewReport, setInterviewReport] = useState<InterviewReport | null>(null)
+  const [interviewReportBusy, setInterviewReportBusy] = useState(false)
+  const [interviewHistory, setInterviewHistory] = useState<InterviewSession[]>([])
+  const interviewMessagesRef = useRef<HTMLDivElement>(null)
 
   const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers)
     if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
     return fetch(url, { ...options, headers })
   }, [authToken])
+
+  const toggleTheme = () => setTheme((current) => current === 'light' ? 'dark' : 'light')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  }, [theme])
 
   useEffect(() => {
     let active = true
@@ -347,6 +521,11 @@ function App() {
     setExtractionStatus('idle')
     setChatSessionId(crypto.randomUUID().replaceAll('-', ''))
     setQuizSessionId(crypto.randomUUID().replaceAll('-', ''))
+    setInterviewSession(null)
+    setInterviewMessages([])
+    setInterviewReport(null)
+    setInterviewHistory([])
+    setInterviewError('')
   }
 
   const authenticated = (token: string, user: UserProfile) => {
@@ -399,8 +578,8 @@ function App() {
       ])
       const materialsPayload = await materialsResponse.json()
       const chatsPayload = await chatsResponse.json()
-      if (!materialsResponse.ok) throw new Error(materialsPayload.detail || 'Processed data history could not be loaded.')
-      if (!chatsResponse.ok) throw new Error(chatsPayload.detail || 'Chat history could not be loaded.')
+      if (!materialsResponse.ok) throw new Error(materialsPayload.detail || 'Your materials could not be loaded. Please refresh.')
+      if (!chatsResponse.ok) throw new Error(chatsPayload.detail || 'Your chat history could not be loaded.')
       const nextMaterials: MaterialRecord[] = materialsPayload.materials || []
       setMaterials(nextMaterials)
       setChatSessions(chatsPayload.sessions || [])
@@ -415,7 +594,7 @@ function App() {
         : nextMaterials.filter((item) => item.status === 'ready').slice(0, 12).map((item) => item.resource_id))
       setHistoryMessage('')
     } catch (error) {
-      setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded.')
+      setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded. Please refresh.')
     } finally {
       if (!silent) setHistoryBusy(false)
     }
@@ -538,27 +717,30 @@ function App() {
         setUploadedResourceId(response.resource_id)
         setExtractionStatus(response.processing_job?.status === 'completed' ? 'queued' : (response.processing_job?.status || 'queued'))
         setMessage(response.deduplicated
-          ? 'This material already exists. Its saved processing result will be reused.'
-          : `Uploaded securely. Text extraction, ${ocrProviderLabel} OCR${bedrockRuntime?.visual_understanding_enabled ? ', and Bedrock visual understanding' : ''} have been queued automatically.`)
+          ? 'This material already exists in your workspace. Its saved processing result will be reused.'
+          : 'File uploaded. Text extraction and AI processing have been queued automatically.')
         void loadHistories()
       } else {
-        let detail = 'The upload could not be completed. Please try again.'
+        let detail = 'Upload failed. Please check your file and try again.'
         try {
-          detail = JSON.parse(request.responseText).detail || detail
-        } catch {
-          // Keep the clear generic message when the server response is not JSON.
-        }
+          const parsed = JSON.parse(request.responseText)
+          const raw = parsed.detail || ''
+          if (request.status === 413) detail = 'That file is too large. The maximum size is 100 MB.'
+          else if (request.status === 415) detail = 'That file type is not supported. Please use PDF, PPTX, PNG, or JPEG.'
+          else if (request.status === 401) detail = 'Your session has expired. Please sign in again.'
+          else if (raw) detail = raw
+        } catch { /* Keep the fallback message. */ }
         setStatus('error')
         setMessage(detail)
       }
     })
     request.addEventListener('error', () => {
       setStatus('error')
-      setMessage('The backend could not be reached. Check that it is running on port 8000.')
+      setMessage('The server could not be reached. Make sure the backend is running, then try again.')
     })
     setStatus('uploading')
     setProgress(0)
-    setMessage('Uploading securely to your local workspace...')
+    setMessage('Uploading to your local workspace…')
     request.send(formData)
   }
 
@@ -575,9 +757,9 @@ function App() {
         : referenceType === 'timestamp' ? 'caption segments' : 'images'
     setExtractionMessage(referenceType === 'timestamp'
       ? `Indexed ${payload.content.length} timestamped caption segments.`
-      : `Processed ${payload.content.length} ${units} with local text extraction and ${ocrProviderLabel} OCR.`)
+      : `Processed ${payload.content.length} ${units} successfully.`)
     void loadHistories()
-  }, [apiFetch, loadHistories, ocrProviderLabel])
+  }, [apiFetch, loadHistories])
 
   const importYoutube = async () => {
     if (!youtubeUrl.trim() || status === 'uploading') return
@@ -632,11 +814,11 @@ function App() {
         } else if (job?.status === 'processing') {
           setExtractionStatus('processing')
           setExtractionMessage(job.progress_total
-            ? `Extracting text, running ${ocrProviderLabel} OCR${bedrockRuntime?.visual_understanding_enabled ? ', and interpreting relevant visuals with Bedrock' : ''}… ${job.progress_current} of ${job.progress_total}`
-            : activeYoutubeUrl ? 'Retrieving timestamped YouTube captions…' : `Starting local text extraction and ${ocrProviderLabel} OCR…`)
+            ? `Analyzing and extracting text from material… ${job.progress_current} of ${job.progress_total}`
+            : activeYoutubeUrl ? 'Retrieving timestamped video captions…' : 'Preparing intelligent document extraction…')
         } else {
           setExtractionStatus('queued')
-          setExtractionMessage('Waiting for the local processing worker…')
+          setExtractionMessage('Preparing document for processing…')
         }
       } catch (error) {
         if (active) {
@@ -654,23 +836,23 @@ function App() {
       active = false
       window.clearInterval(timer)
     }
-  }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, ocrProviderLabel, bedrockRuntime?.visual_understanding_enabled])
+  }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, bedrockRuntime?.visual_understanding_enabled])
 
   const retryProcessing = async () => {
     if (!uploadedResourceId || extractionStatus !== 'error') return
     setExtractionStatus('queued')
     setProcessingProgress(0)
-    setExtractionMessage(`Re-queuing local text extraction and ${ocrProviderLabel} OCR…`)
+    setExtractionMessage('Re-queuing for processing…')
     try {
       const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
       })
       const payload = await response.json()
       if (!response.ok) throw new Error(payload.detail || 'The material could not be re-queued.')
-      setExtractionMessage('Waiting for the local processing worker…')
+      setExtractionMessage('Waiting for the processing worker…')
     } catch (error) {
       setExtractionStatus('error')
-      setExtractionMessage(error instanceof Error ? error.message : 'The material could not be re-queued.')
+      setExtractionMessage(error instanceof Error ? error.message : 'The material could not be re-queued. Please try again.')
     }
   }
 
@@ -799,7 +981,7 @@ function App() {
       if (!response.ok) throw new Error(payload.detail || 'The quiz could not be scored.')
       setQuizResult(payload)
     } catch (error) {
-      setQuizError(error instanceof Error ? error.message : 'The quiz could not be scored.')
+      setQuizError(error instanceof Error ? error.message : 'The quiz could not be scored. Please try again.')
     } finally {
       setQuizBusy(false)
     }
@@ -819,12 +1001,178 @@ function App() {
         }),
       })
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The summary could not be generated.')
+      if (!response.ok) throw new Error(payload.detail || 'The summary could not be generated. Please try again.')
       setSummaryResult(payload)
     } catch (error) {
-      setSummaryError(error instanceof Error ? error.message : 'The summary could not be generated.')
+      setSummaryError(error instanceof Error ? error.message : 'The summary could not be generated. Please try again.')
     } finally {
       setSummaryBusy(false)
+    }
+  }
+
+  // ---------- Interview handlers ----------
+  const interviewSessionId = useRef(crypto.randomUUID().replaceAll('-', ''))
+
+  const loadInterviewHistory = useCallback(async () => {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/interview/history`)
+      const payload = await response.json()
+      if (response.ok) setInterviewHistory(payload.sessions || [])
+    } catch { /* Non-critical */ }
+  }, [apiFetch])
+
+  useEffect(() => {
+    // Server history must be refreshed when the authenticated account changes.
+    // oxlint-disable-next-line react/set-state-in-effect
+    if (currentUser) void loadInterviewHistory()
+  }, [currentUser, loadInterviewHistory])
+
+  useEffect(() => {
+    const container = interviewMessagesRef.current
+    if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
+  }, [interviewMessages, interviewBusy])
+
+  const startInterview = async () => {
+    if (!interviewJobRole.trim() || interviewBusy) return
+    setInterviewBusy(true)
+    setInterviewError('')
+    setInterviewMessages([])
+    setInterviewReport(null)
+    interviewSessionId.current = crypto.randomUUID().replaceAll('-', '')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/interview/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: interviewSessionId.current,
+          job_role: interviewJobRole.trim(),
+          job_description: interviewJobDesc.trim(),
+          resume_text: interviewResume.trim(),
+          material_ids: interviewSourceIds,
+          question_count: interviewQuestionCount,
+          interview_type: interviewType,
+        }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The interview could not be started. Please try again.')
+      setInterviewSession({
+        interview_id: payload.interview_id,
+        status: payload.status,
+        questions_asked: payload.questions_asked,
+        question_count: payload.question_count,
+        job_role: interviewJobRole.trim(),
+        interview_type: interviewType,
+      })
+      setInterviewMessages([{ role: 'interviewer', content: payload.message, timestamp: new Date().toISOString() }])
+    } catch (error) {
+      setInterviewError(error instanceof Error ? error.message : 'The interview could not be started. Please try again.')
+    } finally {
+      setInterviewBusy(false)
+    }
+  }
+
+  const sendInterviewReply = async () => {
+    const text = interviewInput.trim()
+    if (!text || !interviewSession || interviewBusy || interviewSession.status !== 'active') return
+    const userMsg: InterviewMessage = { role: 'candidate', content: text, timestamp: new Date().toISOString() }
+    setInterviewMessages((prev) => [...prev, userMsg])
+    setInterviewInput('')
+    setInterviewBusy(true)
+    setInterviewError('')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/interview/${interviewSession.interview_id}/respond`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'Something went wrong. Please try again.')
+      setInterviewSession((prev) => prev ? { ...prev, status: payload.status, questions_asked: payload.questions_asked } : prev)
+      setInterviewMessages((prev) => [...prev, { role: 'interviewer', content: payload.message, timestamp: new Date().toISOString() }])
+    } catch (error) {
+      setInterviewError(error instanceof Error ? error.message : 'Something went wrong sending your response. Please try again.')
+      setInterviewMessages((prev) => prev.filter((m) => m !== userMsg))
+      setInterviewInput(text)
+    } finally {
+      setInterviewBusy(false)
+    }
+  }
+
+  const fetchInterviewReport = async () => {
+    if (!interviewSession || interviewReportBusy) return
+    setInterviewReportBusy(true)
+    setInterviewError('')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/interview/${interviewSession.interview_id}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const payload = await response.json()
+      if (!response.ok) throw new Error(payload.detail || 'The evaluation report could not be generated. Please try again.')
+      setInterviewReport(payload.report)
+      setInterviewSession((prev) => prev ? { ...prev, status: 'reported' } : prev)
+      void loadInterviewHistory()
+    } catch (error) {
+      setInterviewError(error instanceof Error ? error.message : 'The report could not be generated. Please try again.')
+    } finally {
+      setInterviewReportBusy(false)
+    }
+  }
+
+  const resetInterview = () => {
+    setInterviewSession(null)
+    setInterviewMessages([])
+    setInterviewReport(null)
+    setInterviewError('')
+    setInterviewInput('')
+  }
+
+  const deleteInterviewSession = async (id: string) => {
+    try {
+      await apiFetch(`${API_BASE_URL}/interview/${id}`, { method: 'DELETE' })
+      setInterviewHistory((prev) => prev.filter((s) => s.interview_id !== id))
+    } catch { /* Ignore */ }
+  }
+
+  const openInterviewSession = async (id: string) => {
+    try {
+      setInterviewBusy(true)
+      setInterviewError('')
+      const response = await apiFetch(`${API_BASE_URL}/interview/${id}`)
+      if (!response.ok) throw new Error('Could not load interview session.')
+      const session = await response.json()
+      setInterviewSession({
+        interview_id: session.interview_id,
+        status: session.status,
+        questions_asked: session.history.filter((m: { role: string }) => m.role === 'assistant').length,
+        question_count: session.question_count,
+        job_role: session.job_role,
+        interview_type: session.interview_type,
+      })
+      setInterviewJobRole(session.job_role)
+      setInterviewType(session.interview_type)
+      setInterviewMessages(
+        session.history
+          .filter((m: { content: string }) => m.content !== '[START_INTERVIEW]')
+          .map((m: { role: string; content: string }) => ({
+            role: m.role === 'assistant' ? 'interviewer' : 'candidate',
+            content: m.content,
+            timestamp: new Date().toISOString(),
+          }))
+      )
+      setInterviewReport(session.report || null)
+      document.getElementById('interview')?.scrollIntoView({ behavior: 'smooth' })
+    } catch (error) {
+      setInterviewError(error instanceof Error ? error.message : 'Could not open interview.')
+    } finally {
+      setInterviewBusy(false)
+    }
+  }
+
+  const handleInterviewKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      void sendInterviewReply()
     }
   }
 
@@ -988,16 +1336,25 @@ function App() {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
 
-  if (!currentUser) return <AuthScreen onAuthenticated={authenticated} />
+  if (!currentUser) return <AuthScreen onAuthenticated={authenticated} theme={theme} onToggleTheme={toggleTheme} />
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#workspace" aria-label="LearnFlow AI workspace">
           <BookLogo />
-          <span>LearnFlow<span className="brand-accent"> AI</span></span>
+          <span className="brand-copy"><strong>LearnFlow<span className="brand-accent"> AI</span></strong><small>Study workspace</small></span>
         </a>
+        <nav className="nav-links" aria-label="Main navigation">
+          <a href="#workspace">Materials</a>
+          <a href="#chat">Ask AI</a>
+          <a href="#summary">Summary</a>
+          <a href="#quiz">Quiz Practice</a>
+          <a href="#interview">Mock Interview</a>
+          <a href="#history">History</a>
+        </nav>
         <div className="profile-cluster">
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
           {currentUser.role === 'admin' && <button className="admin-link" type="button" onClick={() => void openAdmin()}>Admin</button>}
           <button className="export-button" type="button" disabled={exportBusy} onClick={() => void exportAccountData()}>{exportBusy ? 'Exporting…' : 'Export data'}</button>
           <div className="profile-button" aria-label="Signed-in profile">
@@ -1107,12 +1464,9 @@ function App() {
               <p className="drop-hint">or click to browse</p>
             </div>
             <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
-            {ocrRuntime && (
-              <p className="file-note">
-                OCR: {ocrProviderLabel} · {ocrRuntime.execution === 'google_cloud' ? 'Google Cloud' : 'Local'} · local fallback {ocrRuntime.local_fallback_enabled ? 'on' : 'off'}
-              </p>
-            )}
-            {bedrockRuntime?.visual_understanding_enabled && <p className="file-note">Visual understanding: {bedrockRuntime.model} · up to {bedrockRuntime.visual_max_units_per_material} relevant visuals per material</p>}
+            <p className="file-note">
+              Intelligent text extraction{ocrRuntime?.execution === 'google_cloud' ? ' (enhanced cloud mode)' : ''} and visual analysis enabled
+            </p>
             <div className="source-divider"><span>or use a video link</span></div>
             <div className="youtube-row">
               <input
@@ -1153,10 +1507,10 @@ function App() {
                       onClick={retryProcessing}
                       disabled={extractionStatus !== 'error'}
                     >
-                      {extractionStatus === 'queued' ? 'Queued for OCR'
-                        : extractionStatus === 'processing' ? `${ocrProviderLabel} OCR · ${processingProgress}%`
-                          : extractionStatus === 'success' ? `Text + OCR${bedrockRuntime?.visual_understanding_enabled ? ' + visual' : ''} complete`
-                            : 'Retry text + OCR'}
+                      {extractionStatus === 'queued' ? 'Queued for processing'
+                        : extractionStatus === 'processing' ? `Processing · ${processingProgress}%`
+                          : extractionStatus === 'success' ? 'Processing complete ✓'
+                            : 'Retry processing'}
                     </button>
                   </>
                 )}
@@ -1199,10 +1553,10 @@ function App() {
                       <span>{unit.reference_type === 'timestamp'
                         ? `${formatTimestamp(unit.start_seconds)}–${formatTimestamp(unit.end_seconds)}`
                         : `${unit.reference_type === 'page' ? 'Page' : unit.reference_type === 'slide' ? 'Slide' : 'Image'} ${unit.reference_number}`}</span>
-                      <small>{unit.extraction_method.replace('+', ' + ')}</small>
+                      <small>{unit.extraction_method ? 'AI text analysis' : 'Document text'}</small>
                       {!unit.has_text && <small>No extractable text</small>}
                     </div>
-                    <p>{(unit.literal_text ?? unit.text) || 'No readable text was found after OCR.'}</p>
+                    <p>{(unit.literal_text ?? unit.text) || 'No readable text could be detected in this section.'}</p>
                     {unit.visual_description && <div className="visual-insight"><strong>Visual interpretation</strong><MarkdownAnswer>{unit.visual_description}</MarkdownAnswer></div>}
                   </section>
                 ))}
@@ -1463,6 +1817,390 @@ function App() {
           </div>
         </section>
 
+        <section className="interview-section" id="interview">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">AI MOCK INTERVIEW & PREPARATION</p>
+              <h2>Realistic Interview Practice</h2>
+            </div>
+            {(interviewSession || interviewReport) && (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={resetInterview}
+              >
+                + New interview
+              </button>
+            )}
+          </div>
+
+          {!interviewSession && !interviewReport && (
+            <div className="interview-setup-layout">
+              <div className="interview-setup-form">
+                <div className="interview-form-group">
+                  <label htmlFor="interview-role">
+                    <strong>Target Job Role / Title</strong>
+                    <span className="field-hint">Specify the role you are preparing for</span>
+                  </label>
+                  <input
+                    id="interview-role"
+                    type="text"
+                    className="interview-input"
+                    value={interviewJobRole}
+                    onChange={(e) => setInterviewJobRole(e.target.value)}
+                    placeholder="e.g. Senior Frontend Engineer, Product Manager, Data Scientist"
+                  />
+                  <div className="role-chips">
+                    {['Frontend Engineer', 'Full Stack Developer', 'Backend Engineer', 'Data Scientist', 'Product Manager', 'DevOps Specialist'].map((role) => (
+                      <button
+                        key={role}
+                        type="button"
+                        className="role-chip"
+                        onClick={() => setInterviewJobRole(role)}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="interview-form-row">
+                  <div className="interview-form-group">
+                    <label htmlFor="interview-type">
+                      <strong>Interview Style</strong>
+                      <span className="field-hint">Focus areas for questions</span>
+                    </label>
+                    <select
+                      id="interview-type"
+                      className="interview-select"
+                      value={interviewType}
+                      onChange={(e) => setInterviewType(e.target.value)}
+                    >
+                      <option value="mixed">Comprehensive (Technical + Behavioral)</option>
+                      <option value="technical">Technical Depth & Architecture</option>
+                      <option value="behavioral">Behavioral (STAR Method)</option>
+                      <option value="hr">HR, Leadership & Culture Fit</option>
+                    </select>
+                  </div>
+
+                  <div className="interview-form-group">
+                    <label htmlFor="interview-count">
+                      <strong>Question Count</strong>
+                      <span className="field-hint">Target session length</span>
+                    </label>
+                    <select
+                      id="interview-count"
+                      className="interview-select"
+                      value={interviewQuestionCount}
+                      onChange={(e) => setInterviewQuestionCount(Number(e.target.value))}
+                    >
+                      <option value={3}>3 Questions (~5 minutes)</option>
+                      <option value={5}>5 Questions (~12 minutes)</option>
+                      <option value={7}>7 Questions (~20 minutes)</option>
+                      <option value={10}>10 Questions (~30 minutes)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="interview-form-group">
+                  <label htmlFor="interview-desc">
+                    <strong>Job Description / Key Requirements (Optional)</strong>
+                    <span className="field-hint">Paste details from the job posting to personalize questions</span>
+                  </label>
+                  <textarea
+                    id="interview-desc"
+                    className="interview-textarea"
+                    rows={3}
+                    value={interviewJobDesc}
+                    onChange={(e) => setInterviewJobDesc(e.target.value)}
+                    placeholder="Paste key responsibilities, required skills, or tech stack..."
+                  />
+                </div>
+
+                <div className="interview-form-group">
+                  <label htmlFor="interview-resume">
+                    <strong>Your Resume / Background (Optional)</strong>
+                    <span className="field-hint">Share your past projects or skills so questions test your background</span>
+                  </label>
+                  <textarea
+                    id="interview-resume"
+                    className="interview-textarea"
+                    rows={3}
+                    value={interviewResume}
+                    onChange={(e) => setInterviewResume(e.target.value)}
+                    placeholder="Paste your key experiences, projects, or background..."
+                  />
+                </div>
+
+                {materials.length > 0 && (
+                  <div className="interview-form-group">
+                    <label>
+                      <strong>Link Library Materials (Optional)</strong>
+                      <span className="field-hint">AI will incorporate concepts from your uploaded study materials</span>
+                    </label>
+                    <div className="interview-material-selector">
+                      {materials.filter((m) => m.status === 'ready').map((mat) => (
+                        <label key={mat.resource_id} className="interview-mat-option">
+                          <input
+                            type="checkbox"
+                            checked={interviewSourceIds.includes(mat.resource_id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setInterviewSourceIds((prev) => [...prev, mat.resource_id])
+                              } else {
+                                setInterviewSourceIds((prev) => prev.filter((id) => id !== mat.resource_id))
+                              }
+                            }}
+                          />
+                          <span>{mat.original_filename}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {interviewError && <p className="history-alert" role="alert">⚠ {interviewError}</p>}
+
+                <button
+                  type="button"
+                  className="start-interview-btn"
+                  onClick={() => void startInterview()}
+                  disabled={!interviewJobRole.trim() || interviewBusy}
+                >
+                  {interviewBusy ? 'Setting up your interview…' : 'Start Mock Interview →'}
+                </button>
+              </div>
+
+              <div className="interview-setup-guide">
+                <div className="guide-card">
+                  <h3>How Mock Interviews Work</h3>
+                  <div className="guide-steps">
+                    <div className="guide-step">
+                      <span className="guide-num">01</span>
+                      <div>
+                        <strong>Adaptive Questions</strong>
+                        <p>The AI acts as an interviewer, asking one tailored question at a time and evaluating responses in context.</p>
+                      </div>
+                    </div>
+                    <div className="guide-step">
+                      <span className="guide-num">02</span>
+                      <div>
+                        <strong>Natural Dialogue</strong>
+                        <p>Answer at your own pace. You can structure your points, give examples, and provide technical depth.</p>
+                      </div>
+                    </div>
+                    <div className="guide-step">
+                      <span className="guide-num">03</span>
+                      <div>
+                        <strong>Actionable Scorecard</strong>
+                        <p>When completed, receive a detailed evaluation with overall scores (0-10), strengths, and ideal answers.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {interviewSession && !interviewReport && (
+            <div className="interview-live-layout">
+              <div className="interview-live-header">
+                <div className="interview-meta-pills">
+                  <span className="pill-badge role">{interviewSession.job_role}</span>
+                  <span className="pill-badge type">
+                    {interviewSession.interview_type === 'technical' ? 'Technical Focus'
+                      : interviewSession.interview_type === 'behavioral' ? 'Behavioral (STAR)'
+                      : interviewSession.interview_type === 'hr' ? 'HR & Culture'
+                      : 'Comprehensive Mixed'}
+                  </span>
+                  <span className="pill-badge count">
+                    {interviewSession.status === 'completed'
+                      ? 'Interview Completed ✓'
+                      : `Question ${Math.min(interviewSession.questions_asked + 1, interviewSession.question_count)} of ${interviewSession.question_count}`}
+                  </span>
+                </div>
+                <div className="interview-header-actions">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void fetchInterviewReport()}
+                    disabled={interviewReportBusy || interviewBusy}
+                  >
+                    {interviewReportBusy ? 'Generating evaluation…' : 'Finish & Generate Report →'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="interview-chat-window" ref={interviewMessagesRef}>
+                {interviewMessages.map((msg, idx) => (
+                  <div key={idx} className={`interview-msg-row ${msg.role}`}>
+                    <div className="interview-msg-avatar">
+                      {msg.role === 'interviewer' ? '🎙' : currentUser?.display_name?.slice(0, 1).toUpperCase() || 'U'}
+                    </div>
+                    <div className="interview-msg-bubble">
+                      <div className="interview-msg-header">
+                        <strong>{msg.role === 'interviewer' ? 'AI Interviewer' : currentUser?.display_name || 'You'}</strong>
+                      </div>
+                      <p className="interview-msg-text">{msg.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {interviewBusy && (
+                  <div className="interview-msg-row interviewer">
+                    <div className="interview-msg-avatar">🎙</div>
+                    <div className="interview-msg-bubble thinking">
+                      <div className="thinking-dots">
+                        <span /><span /><span />
+                      </div>
+                      <small>Interviewer is evaluating and formulating the next question…</small>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {interviewError && <p className="history-alert" role="alert">⚠ {interviewError}</p>}
+
+              {interviewSession.status === 'active' ? (
+                <div className="interview-compose-box">
+                  <textarea
+                    className="interview-compose-input"
+                    value={interviewInput}
+                    onChange={(e) => setInterviewInput(e.target.value)}
+                    onKeyDown={handleInterviewKeyDown}
+                    placeholder="Type your response here... (Press Enter to send, Shift+Enter for a new line)"
+                    rows={3}
+                    disabled={interviewBusy}
+                  />
+                  <div className="interview-compose-actions">
+                    <button
+                      type="button"
+                      className="conclude-early-btn"
+                      onClick={() => void fetchInterviewReport()}
+                      disabled={interviewReportBusy || interviewBusy}
+                    >
+                      {interviewReportBusy ? 'Evaluating…' : 'Wrap up & score'}
+                    </button>
+                    <button
+                      type="button"
+                      className="send-response-btn"
+                      onClick={() => void sendInterviewReply()}
+                      disabled={!interviewInput.trim() || interviewBusy}
+                    >
+                      {interviewBusy ? 'Sending…' : 'Send Answer →'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="interview-completed-banner">
+                  <div className="banner-content">
+                    <h3>Interview Completed!</h3>
+                    <p>You have answered all questions. Click below to generate your performance scorecard and feedback report.</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="generate-report-btn"
+                    onClick={() => void fetchInterviewReport()}
+                    disabled={interviewReportBusy}
+                  >
+                    {interviewReportBusy ? 'Generating Evaluation…' : 'View Evaluation Report →'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {interviewReport && (
+            <div className="interview-report-view">
+              <div className="report-hero-card">
+                <div className="report-score-ring">
+                  <div className="score-number">{interviewReport.overall_score}</div>
+                  <div className="score-denom">/ 10</div>
+                  <div className="score-verdict">
+                    {interviewReport.overall_score >= 8 ? 'Exceptional' : interviewReport.overall_score >= 6 ? 'Competent' : 'Needs Practice'}
+                  </div>
+                </div>
+                <div className="report-hero-copy">
+                  <div className="report-role-tag">Performance Scorecard · {interviewSession?.job_role || 'Target Role'}</div>
+                  <h3>Executive Assessment</h3>
+                  <p>{interviewReport.summary}</p>
+                  <div className="report-action-buttons">
+                    <button type="button" className="secondary-button" onClick={resetInterview}>
+                      + Practice Another Role
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setInterviewReport(null)}
+                    >
+                      Review Transcript
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="report-breakdown-grid">
+                <div className="report-pillar-card strengths">
+                  <h4><span className="pillar-icon">✓</span> Key Strengths</h4>
+                  <ul>
+                    {interviewReport.strengths?.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="report-pillar-card improvements">
+                  <h4><span className="pillar-icon">▲</span> Areas for Growth</h4>
+                  <ul>
+                    {interviewReport.areas_for_improvement?.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="report-pillar-card recommendations">
+                  <h4><span className="pillar-icon">★</span> Actionable Recommendations</h4>
+                  <ul>
+                    {interviewReport.recommendations?.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div className="report-questions-section">
+                <h3>Question-by-Question Breakdown</h3>
+                <div className="report-questions-list">
+                  {interviewReport.questions?.map((q, idx) => (
+                    <article key={idx} className="report-question-card">
+                      <div className="report-q-header">
+                        <span className="report-q-num">Question {idx + 1}</span>
+                        <span className={`report-q-score score-${Math.round(q.score)}`}>
+                          Score: {q.score} / 10
+                        </span>
+                      </div>
+                      <h4 className="report-q-prompt">{q.question}</h4>
+                      <div className="report-q-answer">
+                        <strong>Your Response:</strong>
+                        <p>{q.user_answer || '(No response provided)'}</p>
+                      </div>
+                      <div className="report-q-feedback">
+                        <strong>Evaluator Feedback:</strong>
+                        <p>{q.feedback}</p>
+                      </div>
+                      {q.ideal_answer_hint && (
+                        <div className="report-q-ideal">
+                          <strong>Ideal Approach & Key Points:</strong>
+                          <p>{q.ideal_answer_hint}</p>
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
         <section className="history-section" id="history">
           <div className="section-heading">
             <div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div>
@@ -1472,10 +2210,13 @@ function App() {
           </div>
           <div className="history-tabs" role="tablist" aria-label="History type">
             <button type="button" role="tab" aria-selected={historyTab === 'processed'} className={historyTab === 'processed' ? 'selected' : ''} onClick={() => setHistoryTab('processed')}>
-              Processed data <span>{materials.length}</span>
+              Materials <span>{materials.length}</span>
             </button>
             <button type="button" role="tab" aria-selected={historyTab === 'chat'} className={historyTab === 'chat' ? 'selected' : ''} onClick={() => setHistoryTab('chat')}>
               Chat history <span>{chatSessions.length}</span>
+            </button>
+            <button type="button" role="tab" aria-selected={historyTab === 'interview'} className={historyTab === 'interview' ? 'selected' : ''} onClick={() => setHistoryTab('interview')}>
+              Interviews <span>{interviewHistory.length}</span>
             </button>
           </div>
           {historyMessage && <p className="history-alert" role="status">{historyMessage}</p>}
@@ -1488,7 +2229,7 @@ function App() {
                     {material.thumbnail_url && <img className="history-thumbnail" src={material.thumbnail_url} alt="" />}
                     <div className="history-card-main">
                       <div className="history-title-row"><h3 title={material.original_filename}>{material.original_filename}</h3><span className={`history-status ${material.status}`}>{material.status}</span></div>
-                      <p>{material.source_type === 'video' ? 'YouTube transcript' : material.source_type.toUpperCase()} · Added {formatDate(material.created_at)}</p>
+                      <p>{material.source_type === 'video' ? 'YouTube video' : material.source_type === 'pdf' ? 'PDF document' : material.source_type === 'pptx' ? 'Presentation' : 'Image'} · Added {formatDate(material.created_at)}</p>
                       {processingError && <p className="history-error">Processing error: {processingError}</p>}
                     </div>
                     <div className="history-actions">
@@ -1500,7 +2241,29 @@ function App() {
                     </div>
                   </article>
                 )
-              }) : <p className="history-muted">No processed materials are saved in the local database.</p>}
+              }) : <p className="history-muted">No materials have been added yet. Upload a file or add a YouTube link to get started.</p>}
+            </div>
+          ) : historyTab === 'interview' ? (
+            <div className="history-list">
+              {interviewHistory.length ? interviewHistory.map((session) => (
+                <article className="history-card" key={session.interview_id}>
+                  <div className="history-card-main">
+                    <div className="history-title-row">
+                      <h3>{session.job_role}</h3>
+                      <span className={`history-status ${session.status === 'reported' ? 'ready' : session.status === 'completed' ? 'processing' : 'uploaded'}`}>
+                        {session.status === 'reported' ? 'Report ready' : session.status === 'completed' ? 'Completed' : 'In progress'}
+                      </span>
+                    </div>
+                    <p>{session.interview_type === 'technical' ? 'Technical' : session.interview_type === 'behavioral' ? 'Behavioral' : session.interview_type === 'hr' ? 'HR' : 'Mixed'} interview · {session.question_count} questions · {formatDate(session.created_at || '')}</p>
+                  </div>
+                  <div className="history-actions">
+                    <button className="secondary-button" type="button" onClick={() => void openInterviewSession(session.interview_id)}>
+                      {session.status === 'reported' ? 'View report' : 'Open interview'}
+                    </button>
+                    <button className="delete-button" type="button" onClick={() => void deleteInterviewSession(session.interview_id)}>Delete</button>
+                  </div>
+                </article>
+              )) : <p className="history-muted">Your completed interviews will appear here.</p>}
             </div>
           ) : (
             <div className="history-list">
@@ -1518,7 +2281,7 @@ function App() {
               )) : <p className="history-muted">Completed chat turns will be saved here.</p>}
             </div>
           )}
-          <p className="history-footnote">Deleting a material removes its database record, cached extracted text, chunks, and embeddings. Chat history is stored locally in this app’s SQLite database.</p>
+          <p className="history-footnote">Deleting a material removes its stored content, search index, and AI embeddings. Your data stays on this device only.</p>
         </section>
 
         <section className="how-section" id="how-it-works">
