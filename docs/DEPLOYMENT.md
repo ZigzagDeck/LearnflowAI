@@ -1,48 +1,114 @@
-# LearnFlow AI backend deployment guide
+# LearnFlowAI deployment guide
 
-## What this PR delivers
+## What the repository supports
 
-A reproducible FastAPI Docker image, request timing metadata, and
-configuration documentation. **It does not deploy a live service**, create
-cloud resources, upload secrets, or implement authentication.
+LearnFlowAI can run on one small, long-lived host with:
 
-## Build and start (Docker)
+- the FastAPI web process;
+- one background worker process;
+- the built frontend;
+- one persistent volume for SQLite and uploaded files.
 
-From the repository root:
+It does not require any AWS service except Amazon Bedrock. Google Document AI,
+Jina AI, and Bedrock are called directly over HTTPS. A live host is not created
+by this repository because the provider, region, free-tier limits, and payment
+method are decisions only the account owner can make.
 
-```bash
-docker build -f backend/Dockerfile -t learnflow-api:local .
-docker run --rm -p 8000:8000 \
-  -e LEARNFLOW_MAX_UPLOAD_SIZE_MB=100 \
-  -e LEARNFLOW_CORS_ORIGINS=http://localhost:5173 \
-  learnflow-api:local
-curl http://localhost:8000/health
+## Hosting requirements
+
+Choose a service that supports all of the following:
+
+1. Two continuously running commands (API and worker), or one container in
+   which a process supervisor keeps both alive.
+2. A persistent disk mounted at stable paths for the database and uploads.
+3. At least 1.4 GB RAM. The application processes one material at a time and
+   uses remote OCR, embeddings, and inference by default, but PDF rendering
+   still needs temporary memory.
+4. Outbound HTTPS access to Google, Jina, Bedrock, and YouTube.
+5. HTTPS and environment-secret support.
+
+Avoid ephemeral-only serverless hosts: their files disappear across restarts,
+and their request lifecycle is not suitable for this worker. Use one API replica
+and one worker with SQLite. Multiple API replicas require moving to a shared
+database and a distributed rate limiter first.
+
+## Production environment
+
+Copy the variable names from `.env.example` into the host's secret manager.
+Never upload `.env` or a service-account file to Git. Important deployment
+values include:
+
+```dotenv
+LEARNFLOW_DATABASE_PATH=/data/learnflow.db
+LEARNFLOW_UPLOAD_DIR=/data/uploads
+LEARNFLOW_CORS_ORIGINS=https://your-frontend.example
+LEARNFLOW_ADMIN_EMAIL=you@example.com
+LEARNFLOW_ADMIN_PASSWORD=replace-with-a-long-unique-secret
+LEARNFLOW_AUTH_SESSION_DAYS=30
+LEARNFLOW_GENERAL_REQUESTS_PER_MINUTE=180
+LEARNFLOW_AUTH_REQUESTS_PER_MINUTE=10
+LEARNFLOW_AI_REQUESTS_PER_MINUTE=20
 ```
 
-The expected response is `{"status":"ok"}`. The container runs as an
-unprivileged user and stores temporary uploads in `backend/uploads`.
-**Uploads are lost on container restart** unless durable storage is wired in.
-Do not use this container for multi-user public production traffic until
-authenticated source ownership, storage isolation, retention and scanning
-have been implemented.
+Also configure the existing Google Document AI, Jina, and Bedrock secrets. For
+Google credentials on a host, prefer `LEARNFLOW_GOOGLE_SERVICE_ACCOUNT_JSON`
+from the host's encrypted secret store instead of a checked-in JSON file.
 
-## Environment variables
+Set the frontend build variable to the public HTTPS API URL:
 
-- `LEARNFLOW_MAX_UPLOAD_SIZE_MB`: upload size cap (default 100).
-- `LEARNFLOW_CORS_ORIGINS`: comma-separated trusted frontend origins;
-  default `http://localhost:5173`. Production must set a real HTTPS origin.
+```dotenv
+VITE_API_BASE_URL=https://api.example.com
+```
 
-Model provider keys are configured separately; never commit them.
+## Build and start
 
-## Future CD steps
+Build the frontend once:
 
-1. Choose a cloud deployment account and budget (App Runner or other agreed
-   target), supply credentials through the provider's secret store.
-2. Build image after passing PR checks; push to a managed registry using OIDC
-   identity, not long-lived AWS keys in GitHub.
-3. Run a health and API smoke test against the deployed URL.
-4. Configure persistent/object storage before supporting real student uploads.
-5. Set an allowed frontend origin and arrange monitoring, retention and
-   per-user source authorization.
+```bash
+npm ci
+npm run build
+```
 
-CD is intentionally deferred until the destination is confirmed.
+Start the API and worker as independent long-lived processes from the same
+checkout and with the same environment and persistent volume:
+
+```bash
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+python -m backend.worker
+```
+
+Serve `dist/` with the host's static-site or reverse-proxy feature. Route API
+traffic to port 8000. Only `/health` is intentionally public; application data
+endpoints require a bearer session.
+
+## Data safety and recovery
+
+- Use **Export data** in the signed-in profile bar for a portable JSON backup
+  of that account's materials, extracted content, chats, citations, and quizzes.
+- Back up `/data/learnflow.db` together with `/data/uploads` for a complete
+  operational restore. The JSON export does not contain original uploaded file
+  bytes.
+- Configure host snapshots before accepting irreplaceable data.
+- Use the History UI to delete failed or unwanted materials and chat sessions.
+- Do not automatically delete user content without an explicit retention policy.
+
+The built-in limiter is intentionally small and process-local. It protects one
+low-cost instance from accidental bursts but is not a distributed denial-of-
+service control. A larger public deployment needs a reverse-proxy or managed
+rate limiter, email verification/password recovery, managed secret rotation,
+central logs without content, and a shared production database.
+
+## Verification after deployment
+
+1. Confirm `GET /health` returns `{ "status": "ok" }`.
+2. Register a non-admin account and verify it cannot see another account's
+   materials, chats, quizzes, or admin metrics.
+3. Upload one small image, keep the worker running, and confirm OCR, visual
+   interpretation, embedding, and retrieval complete.
+4. Generate one summary and a one-question quiz, then test citation navigation.
+5. Restart the service and confirm the material and chat still exist.
+6. Download an account export and confirm it contains no password hash, API key,
+   bearer token, content hash, or server file path.
+
+Deployment should remain single-instance until SQLite and the process-local
+limiter are intentionally replaced.

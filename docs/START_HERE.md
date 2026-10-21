@@ -117,13 +117,17 @@ Open [http://localhost:5173](http://localhost:5173) in the browser.
 
 ## 4. Quick health and configuration checks
 
-In a fourth PowerShell window:
+`/health` is public. The usage endpoints are private, so first sign in and keep
+the returned bearer token only in the current PowerShell window:
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
-Invoke-RestMethod http://localhost:8000/usage/ocr
-Invoke-RestMethod http://localhost:8000/usage/embeddings
-Invoke-RestMethod http://localhost:8000/usage/bedrock
+$loginBody = @{ email = "your-login-email"; password = "your-password" } | ConvertTo-Json
+$login = Invoke-RestMethod -Method Post -Uri http://localhost:8000/auth/login -ContentType "application/json" -Body $loginBody
+$headers = @{ Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod http://localhost:8000/usage/ocr -Headers $headers
+Invoke-RestMethod http://localhost:8000/usage/embeddings -Headers $headers
+Invoke-RestMethod http://localhost:8000/usage/bedrock -Headers $headers
 ```
 
 Expected basics:
@@ -141,7 +145,9 @@ These checks do not call Google, Jina, YouTube, or AWS.
 2. Drag in a PDF, PPTX, PNG, JPG, or JPEG.
 3. Select **Upload material**.
 4. Watch the worker terminal and the UI processing status.
-5. The workspace displays extracted/OCR text by page, slide, or image.
+5. The workspace displays literal extracted/OCR text by page, slide, or image.
+   Pages with diagrams, charts, or workflows also show a separate visual
+   interpretation when that stage is enabled.
 
 Google OCR and Jina embedding requests occur during worker processing when
 needed. Do not close the worker while a material is queued or processing.
@@ -161,7 +167,7 @@ captionless, or deployment-blocked videos return a readable error.
 
 The frontend chat panel lists every ready document, image, and YouTube transcript.
 Select one or more sources there and ask a question. For a direct API check, copy
-a ready `resource_id` from `http://localhost:8000/materials`, then run:
+a ready `resource_id` from the frontend, then run:
 
 ```powershell
 $resourceId = "replace-with-ready-resource-id"
@@ -174,6 +180,7 @@ $body = @{
 Invoke-RestMethod `
   -Method Post `
   -Uri http://localhost:8000/chat `
+  -Headers $headers `
   -ContentType "application/json" `
   -Body $body
 ```
@@ -189,14 +196,21 @@ $body = @{
   session_id = "local-demo"
   question = "What has been explained so far?"
   allowed_source_ids = @($resourceId)
-  video_source_id = $resourceId
-  playback_seconds = 300
+  video_scopes = @(@{ source_id = $resourceId; playback_seconds = 300 })
 } | ConvertTo-Json
 ```
 
 Then run the same `Invoke-RestMethod` command above.
 
-## 8. Generate and score a grounded quiz
+## 8. Generate a grounded summary
+
+1. In the frontend, scroll to **Summary**.
+2. Select up to 12 ready materials.
+3. Choose concise, detailed, or study-guide format.
+4. Select **Generate summary** and use its citation chips to reopen the exact
+   document page, slide, image, or YouTube timestamp.
+
+## 9. Generate and score a grounded quiz
 
 1. In the frontend, scroll to **Quiz**.
 2. Select one or more ready materials in **Quiz materials**.
@@ -209,13 +223,24 @@ Then run the same `Invoke-RestMethod` command above.
 Generation makes one bounded Bedrock request. Correct answers remain on the
 server until submission, and scoring is local with no additional provider call.
 
-## 9. Stop the project
+## 10. Export or clean up your data
+
+Select **Export data** beside your profile to download a JSON backup of your
+account's metadata, extracted content, chat history, citations, and quizzes.
+Secrets, password hashes, internal content hashes, and server file paths are
+excluded. Original uploaded file bytes remain in `backend\uploads` and are not
+embedded in the export.
+
+Use **History** to remove an unwanted material or chat session. Material deletion
+is blocked while its worker job is actively processing.
+
+## 11. Stop the project
 
 Press `Ctrl+C` once in each of the three running PowerShell windows. This stops
 the processes but preserves uploaded resources, cached extraction, embeddings,
 and usage counters in local storage.
 
-## 10. Common problems
+## 12. Common problems
 
 - **Frontend says backend cannot be reached:** start Window 1 and confirm port
   8000 is not already occupied.
@@ -232,5 +257,8 @@ and usage counters in local storage.
   fallback remains protected by the configured free-memory gate.
 - **Google or Jina authentication fails:** verify the existing `.env` values,
   rotate any exposed key, then restart both API and worker.
+- **HTTP 429 from LearnFlowAI itself:** wait for the `Retry-After` interval. The
+  local request limits can be tuned with the three rate-limit variables in
+  `.env.example`; provider 429 responses are separate external quota errors.
 
 Never commit `.env`, Google service-account JSON, Bedrock keys, or API keys.

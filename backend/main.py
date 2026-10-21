@@ -55,6 +55,7 @@ from .config import (
 from .embeddings import JINA_USAGE_PROVIDER_KEY
 from .file_validation import validate_upload_content
 from .observability import request_logging_middleware
+from .rate_limit import rate_limit_middleware
 from .ocr import GOOGLE_OCR_PROVIDER_KEY
 from .llm_provider import BEDROCK_USAGE_PROVIDER_KEY
 from .resource_store import (
@@ -95,6 +96,7 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="LearnFlow AI API", lifespan=lifespan)
 app.middleware("http")(request_logging_middleware)
+app.middleware("http")(rate_limit_middleware)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(quiz_router)

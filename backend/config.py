@@ -28,6 +28,15 @@ ADMIN_DISPLAY_NAME = os.getenv("LEARNFLOW_ADMIN_DISPLAY_NAME", "LearnFlow Admin"
 AUTH_SESSION_DAYS = max(
     1, min(90, int(os.getenv("LEARNFLOW_AUTH_SESSION_DAYS", "30")))
 )
+GENERAL_REQUESTS_PER_MINUTE = max(
+    30, min(1_000, int(os.getenv("LEARNFLOW_GENERAL_REQUESTS_PER_MINUTE", "180")))
+)
+AUTH_REQUESTS_PER_MINUTE = max(
+    3, min(60, int(os.getenv("LEARNFLOW_AUTH_REQUESTS_PER_MINUTE", "10")))
+)
+AI_REQUESTS_PER_MINUTE = max(
+    2, min(120, int(os.getenv("LEARNFLOW_AI_REQUESTS_PER_MINUTE", "20")))
+)
 MODEL_CACHE_DIR = Path(
     os.getenv("LEARNFLOW_MODEL_CACHE_DIR", str(BACKEND_DIR / "data" / "models"))
 )

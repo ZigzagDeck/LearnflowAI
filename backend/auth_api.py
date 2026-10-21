@@ -2,8 +2,10 @@
 
 from datetime import UTC, datetime
 import hashlib
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from .auth import (
     bearer_token,
@@ -17,6 +19,7 @@ from .auth import (
     validate_password,
 )
 from .contracts import AuthResponse, LoginRequest, RegisterRequest, UserProfile
+from .config import EXTRACTION_PIPELINE_VERSION
 from .resource_store import ResourceStoreError, UserRecord
 
 
@@ -90,6 +93,81 @@ def logout(
     except ResourceStoreError as exc:
         raise HTTPException(status_code=503, detail="Logout is unavailable.") from exc
     return {"status": "signed_out"}
+
+
+@router.get("/account/export")
+def export_account_data(
+    request: Request, user: UserRecord = Depends(get_current_user)
+) -> StreamingResponse:
+    """Stream a portable JSON backup without exporting credentials or server paths."""
+    store = request.app.state.resource_store
+    try:
+        materials = store.list_for_user(user.user_id)
+        chat_sessions = store.list_chat_sessions(user.user_id)
+        quizzes = store.list_quiz_attempts(user.user_id)
+    except ResourceStoreError as exc:
+        raise HTTPException(status_code=503, detail="Account export is unavailable.") from exc
+
+    def encoded(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def stream_export():
+        yield "{\"schema_version\":1,\"exported_at\":"
+        yield encoded(datetime.now(UTC).isoformat())
+        yield ",\"profile\":"
+        yield encoded(
+            {
+                **user.public_dict(),
+                "created_at": user.created_at,
+                "last_seen_at": user.last_seen_at,
+            }
+        )
+        yield ",\"materials\":["
+        for index, material in enumerate(materials):
+            if index:
+                yield ","
+            metadata = material.public_dict()
+            metadata.pop("stored_filename", None)
+            extraction = store.cached_extraction(
+                material.resource_id, EXTRACTION_PIPELINE_VERSION
+            )
+            yield encoded({**metadata, "extracted_content": extraction or []})
+        yield "],\"chat_sessions\":["
+        for index, session_summary in enumerate(chat_sessions):
+            if index:
+                yield ","
+            session = store.get_chat_session(
+                str(session_summary["session_id"]), user.user_id
+            )
+            if session is not None:
+                yield encoded(session)
+            else:
+                yield "null"
+        yield "],\"quizzes\":["
+        for index, quiz in enumerate(quizzes):
+            if index:
+                yield ","
+            yield encoded(
+                {
+                    "quiz_id": quiz.quiz_id,
+                    "session_id": quiz.session_id,
+                    "source_ids": quiz.source_ids,
+                    "questions": quiz.questions,
+                    "status": quiz.status,
+                    "answers": quiz.answers,
+                    "score": quiz.score,
+                    "created_at": quiz.created_at,
+                    "submitted_at": quiz.submitted_at,
+                }
+            )
+        yield "]}"
+
+    filename = f"learnflow-export-{datetime.now(UTC).date().isoformat()}.json"
+    return StreamingResponse(
+        stream_export(),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/users")

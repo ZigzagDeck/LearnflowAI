@@ -1334,6 +1334,22 @@ class ResourceStore:
         except sqlite3.Error as exc:
             raise ResourceStoreError("Could not save quiz result.") from exc
 
+    def list_quiz_attempts(self, owner_user_id: str) -> list[QuizAttemptRecord]:
+        """Return one account's quiz records for its portable data export."""
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """
+                    SELECT * FROM quiz_attempts
+                    WHERE owner_user_id = ?
+                    ORDER BY created_at ASC, quiz_id ASC
+                    """,
+                    (owner_user_id,),
+                ).fetchall()
+            return [attempt for row in rows if (attempt := self._quiz_attempt(row))]
+        except sqlite3.Error as exc:
+            raise ResourceStoreError("Could not read quiz history.") from exc
+
     def list(self) -> list[ResourceRecord]:
         try:
             with self._connect() as connection:

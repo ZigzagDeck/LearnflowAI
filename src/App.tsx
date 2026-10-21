@@ -249,6 +249,7 @@ function App() {
   const [adminUsers, setAdminUsers] = useState<AdminUserMetric[]>([])
   const [adminBusy, setAdminBusy] = useState(false)
   const [adminError, setAdminError] = useState('')
+  const [exportBusy, setExportBusy] = useState(false)
   const [videoPreview, setVideoPreview] = useState<{ title: string; embedUrl: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -363,6 +364,30 @@ function App() {
     setAuthToken('')
     setCurrentUser(null)
     setAdminOpen(false)
+  }
+
+  const exportAccountData = async () => {
+    setExportBusy(true)
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/account/export`)
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.detail || 'Your data export could not be created.')
+      }
+      const blob = await response.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `learnflow-export-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(downloadUrl)
+    } catch (error) {
+      setHistoryMessage(error instanceof Error ? error.message : 'Your data export could not be created.')
+    } finally {
+      setExportBusy(false)
+    }
   }
 
   const loadHistories = useCallback(async (silent = false) => {
@@ -974,6 +999,7 @@ function App() {
         </a>
         <div className="profile-cluster">
           {currentUser.role === 'admin' && <button className="admin-link" type="button" onClick={() => void openAdmin()}>Admin</button>}
+          <button className="export-button" type="button" disabled={exportBusy} onClick={() => void exportAccountData()}>{exportBusy ? 'Exporting…' : 'Export data'}</button>
           <div className="profile-button" aria-label="Signed-in profile">
             <span className="profile-avatar">{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
             <span className="profile-copy"><strong>{currentUser.display_name}</strong><small>{currentUser.email}</small></span>

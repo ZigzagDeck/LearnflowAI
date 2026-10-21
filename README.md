@@ -177,7 +177,9 @@ LEARNFLOW_VISUAL_MAX_UNITS_PER_MATERIAL=6
 
 The backend defaults to Bedrock Mantle's Chat Completions endpoint so project-scoped Bedrock API keys and catalog models work together. Gemma 4 visual understanding requires this Mantle mode. At most eight retrieved chat chunks or sixteen summary chunks are sent. Before every text or image request the app reserves a deliberately conservative unit count in local SQLite. Requests stop when the configured monthly ceiling would be exceeded. View the counter and visual configuration at `GET /usage/bedrock`. This is a local safety guard, not an AWS billing budget; set an AWS Budget alert as an independent account-level warning.
 
-`LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only after configuring the administrator credentials. Registration, salted password storage, revocable bearer sessions, per-user resource ownership, chat history, and quiz ownership are enforced by the API. An internet-facing production deployment should still add HTTPS, email verification/password recovery, rate limiting, and managed secret rotation.
+`LEARNFLOW_BEDROCK_CHAT_ENABLED` deliberately defaults to `false`. Enable it only after configuring the administrator credentials. Registration, salted password storage, revocable bearer sessions, per-user resource ownership, chat history, and quiz ownership are enforced by the API. Three configurable process-local rate limits protect authentication, AI generation, and general routes from accidental bursts on a single instance. An internet-facing production deployment should still add HTTPS, email verification/password recovery, distributed edge rate limiting, and managed secret rotation.
+
+Signed-in users can select **Export data** to stream a portable JSON backup containing their material metadata and extracted content, conversations with citations, and quiz history. Passwords, session tokens, internal hashes, and server paths are excluded; original uploaded file bytes require a volume backup. See `docs/DEPLOYMENT.md` for the single-instance persistent-host requirements and recovery checklist.
 
 ## Grounded quizzes
 
