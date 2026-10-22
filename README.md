@@ -10,7 +10,7 @@ One thoughtful workspace for your sources, questions, and next breakthrough.
 
 **Read with context. Ask with evidence. Practice with purpose.**
 
-[![Open live demo](https://img.shields.io/badge/OPEN_LIVE_DEMO-LearnFlow_AI-747d43?style=for-the-badge)](https://long-darkness-46bf.shreesairam786001.workers.dev/)
+[![Open live demo](https://img.shields.io/badge/OPEN_LIVE_DEMO-LearnFlow_AI-747d43?style=for-the-badge)](https://tinyurl.com/Learn-Flow-AI)
 [![CI](https://github.com/ZigzagDeck/LearnflowAI/actions/workflows/ci.yml/badge.svg?branch=vm)](https://github.com/ZigzagDeck/LearnflowAI/actions/workflows/ci.yml)
 
 ![React](https://img.shields.io/badge/React_19-20232a?style=flat-square&logo=react&logoColor=61dafb)
@@ -20,7 +20,7 @@ One thoughtful workspace for your sources, questions, and next breakthrough.
 ![Cloudflare](https://img.shields.io/badge/Cloudflare-f38020?style=flat-square&logo=cloudflare&logoColor=white)
 ![Google Cloud](https://img.shields.io/badge/Google_Cloud-4285f4?style=flat-square&logo=googlecloud&logoColor=white)
 
-[Live demo ↗](https://long-darkness-46bf.shreesairam786001.workers.dev/) · [Experience](#a-workspace-that-moves-with-your-learning) · [Screenshots](#a-closer-look) · [Architecture](#from-upload-to-understanding) · [Run locally](#run-locally) · [Deployment](#deployment)
+[Live demo ↗](https://tinyurl.com/Learn-Flow-AI) · [Experience](#a-workspace-that-moves-with-your-learning) · [Screenshots](#a-closer-look) · [Architecture](#from-upload-to-understanding) · [Run locally](#run-locally) · [Deployment](#deployment)
 
 </div>
 
@@ -30,7 +30,7 @@ One thoughtful workspace for your sources, questions, and next breakthrough.
 
 <p align="center"><em>A calm place to bring your learning materials together. Olive Library · light mode.</em></p>
 
-> **Try the live demo:** [Open LearnFlow AI](https://long-darkness-46bf.shreesairam786001.workers.dev/), create an account, upload a small PDF, and wait for **Ready**. Select your source, ask a question, then turn what you learned into a quiz or mock interview.
+> **Try the live demo:** [Open LearnFlow AI](https://tinyurl.com/Learn-Flow-AI), create an account, upload a small PDF, and wait for **Ready**. Select your source, ask a question, then turn what you learned into a quiz or mock interview.
 
 ---
 
@@ -202,7 +202,7 @@ These paths are Git-ignored. Back up the database and uploads together. Account 
 
 ## Deployment
 
-**Live application:** [long-darkness-46bf.shreesairam786001.workers.dev](https://long-darkness-46bf.shreesairam786001.workers.dev/)
+**Live application:** [tinyurl.com/Learn-Flow-AI](https://tinyurl.com/Learn-Flow-AI)
 
 The deployed frontend uses **Cloudflare Workers Static Assets**. The backend layout keeps the API, ingestion worker, SQLite database, and original uploads together on a **GCP VM with persistent disk**, reached through a Cloudflare Tunnel.
 
@@ -269,6 +269,6 @@ node --experimental-strip-types --test tests/auth-errors.test.mjs
 
 **Your sources. Your questions. Your next step.**
 
-[Open LearnFlow AI ↗](https://long-darkness-46bf.shreesairam786001.workers.dev/)
+[Open LearnFlow AI ↗](https://tinyurl.com/Learn-Flow-AI)
 
 </div>
