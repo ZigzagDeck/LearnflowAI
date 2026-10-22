@@ -11,6 +11,7 @@ from backend.embeddings import (
     FallbackEmbeddingProvider,
     JINA_USAGE_PROVIDER_KEY,
     JinaEmbeddingProvider,
+    normalize_vector,
 )
 from backend.resource_store import ResourceStore
 from backend.tests.fake_embeddings import TinyEmbeddingProvider
@@ -147,3 +148,10 @@ def test_local_embedding_fallback_is_explicit_and_sticky():
     assert provider.model_name == TinyEmbeddingProvider.model_name
     assert len(vectors[0]) == 4
     assert len(provider.embed_query("optimization")) == 4
+
+
+def test_vectors_are_normalized_for_cosine_search():
+    vector = normalize_vector([3.0, 4.0])
+
+    assert vector == pytest.approx([0.6, 0.8])
+    assert math.sqrt(sum(value * value for value in vector)) == pytest.approx(1.0)

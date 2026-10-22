@@ -2,12 +2,9 @@
 
 All files use pytest's isolated tmp_path; no cloud credentials are required.
 """
-from io import BytesIO
-
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
-from pptx import Presentation
 
 import backend.main as backend_main
 from backend.processing import process_next_job
@@ -36,15 +33,6 @@ def make_pdf():
     pdf_bytes = doc.tobytes()
     doc.close()
     return pdf_bytes
-
-
-def make_pptx():
-    slides = Presentation()
-    slide = slides.slides.add_slide(slides.slide_layouts[5])
-    slide.shapes.title.text = "Machine Learning Basics"
-    stream = BytesIO()
-    slides.save(stream)
-    return stream.getvalue()
 
 
 def upload(client, name, content):
@@ -123,40 +111,6 @@ def test_bedrock_usage_reports_guard_without_calling_aws(client):
     )
 
 
-def test_upload_and_extract_pdf_with_page_reference(client):
-    response = upload(client, "lecture.pdf", make_pdf())
-    assert response.status_code == 200
-    identifier = response.json()["stored_filename"]
-    resource_id = response.json()["resource_id"]
-    assert identifier.endswith(".pdf")
-    queued = client.post(f"/materials/{identifier}/extract")
-    assert queued.status_code == 202
-    run_worker_once()
-    result = client.get(f"/materials/{resource_id}/content")
-    assert result.status_code == 200
-    assert result.json()["content"][0]["reference_type"] == "page"
-    assert result.json()["content"][0]["reference_number"] == 1
-    assert "LearnFlow lesson notes" in result.json()["content"][0]["text"]
-    chunks = client.get(f"/materials/{resource_id}/chunks")
-    assert chunks.status_code == 200
-    assert chunks.json()["chunks"][0]["reference_type"] == "page"
-    assert chunks.json()["chunks"][0]["reference_number"] == 1
-
-
-def test_upload_and_extract_pptx_with_slide_reference(client):
-    response = upload(client, "lecture.pptx", make_pptx())
-    assert response.status_code == 200
-    identifier = response.json()["stored_filename"]
-    resource_id = response.json()["resource_id"]
-    assert client.post(f"/materials/{identifier}/extract").status_code == 202
-    run_worker_once()
-    result = client.get(f"/materials/{resource_id}/content")
-    assert result.status_code == 200
-    assert result.json()["content"][0]["reference_type"] == "slide"
-    assert result.json()["content"][0]["reference_number"] == 1
-    assert "Machine Learning Basics" in result.json()["content"][0]["text"]
-
-
 def test_duplicate_upload_reuses_existing_resource(client, tmp_path):
     content = make_pdf()
     first = upload(client, "lecture.pdf", content)
@@ -212,12 +166,6 @@ def test_material_list_and_status_are_persisted(client):
     assert "content_hash" not in status.json()
 
 
-def test_unsupported_upload_type_is_rejected(client, tmp_path):
-    response = upload(client, "malware.exe", b"not a supported type")
-    assert response.status_code == 415
-    assert not list(tmp_path.iterdir())
-
-
 def test_upload_size_limit_and_cleanup(client, tmp_path, monkeypatch):
     monkeypatch.setattr(backend_main, "MAX_UPLOAD_SIZE_BYTES", 8)
     response = upload(client, "too-large.pdf", b"more than eight bytes")
@@ -233,20 +181,3 @@ def test_missing_document_returns_404(client):
 @pytest.mark.parametrize("identifier", ["invalid.pdf", "not-a-uuid", "a" * 32 + ".exe"])
 def test_invalid_document_identifier(client, identifier):
     assert client.post(f"/materials/{identifier}/extract").status_code == 400
-
-
-def test_malformed_pdf_is_rejected_during_extraction(client):
-    response = upload(client, "broken.pdf", b"not really a PDF")
-    if response.status_code == 415:
-        # Hardened content validation may reject a forged PDF at upload time.
-        return
-    assert response.status_code == 200
-    run_worker_once()
-    result = client.get(f"/materials/{response.json()['resource_id']}/status")
-    assert result.json()["status"] == "failed"
-
-
-def test_legacy_ppt_has_explicit_conversion_error(client):
-    response = upload(client, "legacy.ppt", b"old PowerPoint content")
-    assert response.status_code == 415
-    assert "PPTX" in response.json()["detail"]

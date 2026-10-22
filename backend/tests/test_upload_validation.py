@@ -65,6 +65,7 @@ def image_bytes(format_name="PNG"):
     ("fake.pdf", b"not a pdf"),
     ("fake.pptx", b"not a zip"),
     ("fake.ppt", b"not OLE"),
+    ("malware.exe", b"not a supported type"),
     ("fake.avi", b"RIFF0000WAVE"),
     ("fake.mp4", b"broken ftyp"),
     ("fake.mov", b"invalid"),
@@ -75,6 +76,8 @@ def test_rejects_fake_upload_and_deletes_it(client, filename, data):
     api_client, directory = client
     response = post(api_client, filename, data)
     assert response.status_code == 415, response.text
+    if filename.endswith(".ppt"):
+        assert "PPTX" in response.json()["detail"]
     assert list(directory.iterdir()) == []
 
 
@@ -102,6 +105,11 @@ def test_upload_and_extract_real_content(client, ext, contents, kind):
     assert output.status_code == 200, output.text
     assert output.json()["content"][0]["reference_type"] == kind
     assert output.json()["content"][0]["reference_number"] == 1
+    chunks = api_client.get(f"/materials/{resource_id}/chunks")
+    assert chunks.status_code == 200
+    assert chunks.json()["chunks"][0]["reference_type"] == kind
+    assert chunks.json()["chunks"][0]["reference_number"] == 1
+
 
 
 @pytest.mark.parametrize("filename,format_name", [
