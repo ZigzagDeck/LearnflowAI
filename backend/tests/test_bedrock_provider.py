@@ -126,3 +126,46 @@ def test_bedrock_mantle_uses_project_endpoint_and_tracks_usage(tmp_path):
     assert request_data["payload"]["model"] == "google.gemma-4-31b"
     assert "Approved evidence." in request_data["payload"]["messages"][1]["content"]
     assert store.current_monthly_usage(BEDROCK_USAGE_PROVIDER_KEY)[1] > 128
+
+
+def test_bedrock_allows_50k_for_explicitly_detailed_answers(tmp_path):
+    request_data = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        request_data["payload"] = __import__("json").loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Detailed answer."}}]},
+        )
+
+    store = ResourceStore(tmp_path / "learnflow.db")
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    bedrock = BedrockProvider(
+        BedrockConfig(
+            region="us-east-1",
+            model_id="google.gemma-4-31b",
+            api_mode="mantle_chat_completions",
+            api_key="bedrock-secret",
+            max_tokens=50_000,
+        ),
+        store,
+        client=client,
+    )
+
+    answer = asyncio.run(
+        bedrock.answer("Explain this in detail.", ["Approved evidence."])
+    )
+
+    assert answer == "Detailed answer."
+    assert request_data["payload"]["max_tokens"] == 50_000
+
+
+def test_bedrock_rejects_output_limit_above_50k():
+    with pytest.raises(ProviderError, match="output limit"):
+        BedrockConfig(
+            region="us-east-1",
+            model_id="google.gemma-4-31b",
+            api_mode="mantle_chat_completions",
+            api_key="bedrock-secret",
+            max_tokens=50_001,
+        )

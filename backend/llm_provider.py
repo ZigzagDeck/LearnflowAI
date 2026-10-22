@@ -171,7 +171,7 @@ class BedrockConfig:
             raise ProviderError("Amazon Bedrock API mode is invalid.")
         if self.api_mode == "mantle_chat_completions" and not self.api_key:
             raise ProviderError("Amazon Bedrock API key is not configured.")
-        if not 64 <= self.max_tokens <= 5_000:
+        if not 64 <= self.max_tokens <= 50_000:
             raise ProviderError("Amazon Bedrock output limit is invalid.")
         if self.monthly_token_unit_limit < 1:
             raise ProviderError("Amazon Bedrock monthly limit is invalid.")
@@ -195,7 +195,9 @@ class BedrockProvider:
         if self._client is not None:
             return self._client
         if self.config.api_mode == "mantle_chat_completions":
-            self._client = httpx.Client(timeout=45.0, follow_redirects=False)
+            # Large, explicitly requested answers can take several minutes.  Keep
+            # the network timeout above the configurable 50K-token allowance.
+            self._client = httpx.Client(timeout=600.0, follow_redirects=False)
             return self._client
         try:
             import boto3
@@ -207,7 +209,7 @@ class BedrockProvider:
             region_name=self.config.region,
             config=Config(
                 connect_timeout=10,
-                read_timeout=45,
+                read_timeout=600,
                 retries={"max_attempts": 2, "mode": "standard"},
             ),
         )

@@ -92,7 +92,7 @@ Several requirements evolved while the project was being built. They materially 
 4. **Laptop memory had to stay below roughly 1.4 GB during testing.** This ruled out a large always-resident local model stack and influenced the single-worker design, bounded batches, streaming vector search, lazy local model loading, and free-memory gate.
 5. **YouTube links were required.** The application needed to process a URL rather than requiring users to upload a video.
 6. **The UI needed honest file support and functional drag-and-drop.** Unsupported extensions were removed from the user-facing input path, while PNG/JPEG support was added.
-7. **Answers needed situation-dependent length.** A fixed short output cap was not acceptable, but every response also should not consume the full 5,000-token ceiling.
+7. **Answers needed situation-dependent length.** A fixed short output cap was not acceptable, but every response also should not consume the full configured output ceiling.
 8. **Users needed manual cleanup.** Processed-material and chat histories had to be visible and deletable from the UI.
 9. **All work had to remain isolated on `vm`.** Changes were committed and pushed as small, named milestones.
 
@@ -314,7 +314,7 @@ The chat service enforces resource scope on the server, retrieves no more than e
 
 The UI now supports selecting ready documents, images, and YouTube resources; asking questions; viewing citations; opening previous chat sessions; and deleting chat history. A processed-data history lists current state, failures, retry actions, and deletion controls.
 
-Initial answers were too short because output was explicitly capped near 1,200 tokens. Raising every response to 5,000 would have increased cost and latency even for simple questions. The fix was an adaptive budget:
+Initial answers were too short because output was explicitly capped near 1,200 tokens. Giving every response the full configured allowance would have increased cost and latency even for simple questions. The fix was an adaptive budget:
 
 - brief requests: up to 500 tokens;
 - ordinary factual requests: around 900;
@@ -403,7 +403,7 @@ Important limits are explicit:
 - local embeddings: one thread by default, batch four, 768 MB free-memory gate;
 - chat: no more than eight evidence chunks;
 - quizzes: no more than 12 sources, 12 evidence chunks, and 10 questions;
-- Bedrock: adaptive output with a hard 5,000-token ceiling.
+- Bedrock: adaptive output with a configurable hard ceiling, currently 50,000 tokens. Ordinary requests retain smaller budgets; only explicit detailed-depth requests can receive the full allowance.
 
 ### 8.8 Treating provider content as untrusted
 
