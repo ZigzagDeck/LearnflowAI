@@ -1299,7 +1299,7 @@ footer span {
   font: inherit;
 }
 
-.auth-card form button {
+.auth-card form button.auth-submit {
   padding: 13px;
   border: 0;
   border-radius: 9px;
@@ -1310,7 +1310,7 @@ footer span {
   font-weight: 700;
 }
 
-.auth-card button:disabled {
+.auth-card form button.auth-submit:disabled {
   opacity: .55;
 }
 
@@ -2354,6 +2354,18 @@ h1 span {
   padding-right: 52px !important;
 }
 
+/* Disable native Edge / Windows password reveal icon so only our eye icon is visible */
+.password-input-wrap input::-ms-reveal,
+.password-input-wrap input::-ms-clear,
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.password-input-wrap .password-toggle-btn,
+.auth-card form button.password-toggle-btn,
 .password-toggle-btn {
   position: absolute;
   top: 50%;
@@ -2364,23 +2376,52 @@ h1 span {
   justify-content: center;
   width: 38px;
   height: 38px;
-  padding: 0;
-  margin: 0;
-  border: 0;
-  background: transparent;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
   color: var(--muted);
   cursor: pointer;
-  border-radius: 50%;
   line-height: 1;
+  -webkit-appearance: none;
+  appearance: none;
   transition: color .15s ease, transform .1s ease;
 }
 
+.password-input-wrap .password-toggle-btn:hover,
+.auth-card form button.password-toggle-btn:hover,
 .password-toggle-btn:hover {
-  background: transparent;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
   color: var(--olive-dark);
 }
 
+.password-input-wrap .password-toggle-btn:focus,
+.password-input-wrap .password-toggle-btn:focus-visible,
+.auth-card form button.password-toggle-btn:focus,
+.auth-card form button.password-toggle-btn:focus-visible,
+.password-toggle-btn:focus,
+.password-toggle-btn:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+.password-input-wrap .password-toggle-btn:active,
+.auth-card form button.password-toggle-btn:active,
 .password-toggle-btn:active {
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
   transform: translateY(-50%) scale(.92);
 }
 
@@ -5166,15 +5207,38 @@ body {
   opacity: 1;
 }
 
+:root[data-theme='dark'] .password-input-wrap .password-toggle-btn,
+:root[data-theme='dark'] .auth-card form button.password-toggle-btn,
 :root[data-theme='dark'] .password-toggle-btn {
-  color: color-mix(in srgb, var(--ink) 65%, var(--muted));
-  background: transparent;
-  border: 0;
+  color: color-mix(in srgb, var(--ink) 65%, var(--muted)) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 
+:root[data-theme='dark'] .password-input-wrap .password-toggle-btn:hover,
+:root[data-theme='dark'] .auth-card form button.password-toggle-btn:hover,
 :root[data-theme='dark'] .password-toggle-btn:hover {
-  color: var(--accent-text);
-  background: transparent;
+  color: var(--accent-text) !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+:root[data-theme='dark'] .password-input-wrap .password-toggle-btn:focus,
+:root[data-theme='dark'] .password-input-wrap .password-toggle-btn:focus-visible,
+:root[data-theme='dark'] .auth-card form button.password-toggle-btn:focus,
+:root[data-theme='dark'] .auth-card form button.password-toggle-btn:focus-visible,
+:root[data-theme='dark'] .password-toggle-btn:focus,
+:root[data-theme='dark'] .password-toggle-btn:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 :root[data-theme='dark'] .auth-card form button.auth-submit {
