@@ -27,6 +27,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Test authentication error handling
+        run: node --experimental-strip-types --test tests/auth-errors.test.mjs
       - name: Typecheck and production build
         run: npm run build
 
@@ -55,7 +57,7 @@ jobs:
       - name: Build API image
         run: docker build -f backend/Dockerfile -t learnflow-api:ci .
       - name: Start container
-        run: docker run --rm -d --name learnflow-ci -p 8000:8000 learnflow-api:ci
+        run: docker run -d --name learnflow-ci -p 8000:8000 learnflow-api:ci
       - name: Check health
         run: |
           for i in $(seq 1 30); do

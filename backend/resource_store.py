@@ -1,4 +1,6 @@
 """SQLite-backed material metadata, extraction cache, and local indexes."""
+from __future__ import annotations
+
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta

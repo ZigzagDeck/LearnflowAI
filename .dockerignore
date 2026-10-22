@@ -10,6 +10,7 @@ __pycache__
 .env.*
 !.env.example
 backend/uploads
+backend/data
 *.pdf
 *.ppt
 *.pptx

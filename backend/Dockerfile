@@ -9,8 +9,8 @@ COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend ./backend
 RUN adduser --disabled-password --gecos "" --uid 10001 learnflow \
-    && mkdir -p /app/backend/uploads \
-    && chown -R learnflow:learnflow /app/backend/uploads
+    && mkdir -p /app/backend/uploads /app/backend/data/models \
+    && chown -R learnflow:learnflow /app/backend/uploads /app/backend/data
 
 USER learnflow
 EXPOSE 8000
