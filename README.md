@@ -1,58 +1,121 @@
+<div align="center">
+
+<img src="public/favicon.svg" alt="LearnFlow AI book logo" width="76" height="76" />
+
 # LearnFlow AI
 
 ### Turn “I’ve read it” into “I can explain it.”
 
-**Upload your sources. Ask better questions. Put your understanding to the test.**
+One thoughtful workspace for your sources, questions, and next breakthrough.
 
-LearnFlow AI turns PDFs, slides, images, and captioned YouTube videos into a learning workspace for **chat, summaries, quizzes, and mock interviews**. Follow references back to the page, slide, image, or timestamp behind the response.
+**Read with context. Ask with evidence. Practice with purpose.**
 
-**React + TypeScript · FastAPI · SQLite · Google Document AI · Jina AI · Amazon Bedrock**
+[![Open live demo](https://img.shields.io/badge/OPEN_LIVE_DEMO-LearnFlow_AI-747d43?style=for-the-badge)](https://long-darkness-46bf.shreesairam786001.workers.dev/)
+[![CI](https://github.com/ZigzagDeck/LearnflowAI/actions/workflows/ci.yml/badge.svg?branch=vm)](https://github.com/ZigzagDeck/LearnflowAI/actions/workflows/ci.yml)
 
-[Explore](#one-workspace-from-reading-to-recall) · [Architecture](#the-engineering-behind-the-experience) · [Run locally](#run-locally) · [Data & limits](#data-costs-and-current-limits) · [Deploy](#deployment)
+![React](https://img.shields.io/badge/React_19-20232a?style=flat-square&logo=react&logoColor=61dafb)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white)
+![Cloudflare](https://img.shields.io/badge/Cloudflare-f38020?style=flat-square&logo=cloudflare&logoColor=white)
+![Google Cloud](https://img.shields.io/badge/Google_Cloud-4285f4?style=flat-square&logo=googlecloud&logoColor=white)
 
-> **Current stage:** A working prototype for personal use and small demonstrations, running on one persistent backend. Storage is local to that backend; AI processing uses cloud providers.
+[Live demo ↗](https://long-darkness-46bf.shreesairam786001.workers.dev/) · [Experience](#a-workspace-that-moves-with-your-learning) · [Screenshots](#a-closer-look) · [Architecture](#from-upload-to-understanding) · [Run locally](#run-locally) · [Deployment](#deployment)
 
-## One workspace, from reading to recall
+</div>
 
-| Action | What you get |
-| --- | --- |
-| **Ask** | Chat across selected sources, with inspectable evidence and saved conversations. |
-| **Condense** | Generate summaries from your materials. |
-| **Test** | Single-answer, multiple-answer, short-answer, and mixed quizzes with scoring. |
-| **Rehearse** | Role-aware mock interviews using optional résumé text and selected materials, with feedback and reports. |
-| **Verify** | Open source references and inspect extracted content in History. |
+<br />
 
-**Inputs:** PDF · PPTX · PNG · JPG/JPEG · public YouTube URLs with accessible captions.
+![LearnFlow AI learning workspace in the light Olive Library theme](docs/screenshots/workspace.png)
 
-**Workflow:** Add material → wait for **Ready** → select sources → ask, summarize, test, or rehearse → inspect the evidence.
+<p align="center"><em>A calm place to bring your learning materials together. Olive Library · light mode.</em></p>
 
-Accounts, per-user material ownership, export, deletion, and an admin usage view support the learning workflow. Nine themes include light and dark modes.
+> **Try the live demo:** [Open LearnFlow AI](https://long-darkness-46bf.shreesairam786001.workers.dev/), create an account, upload a small PDF, and wait for **Ready**. Select your source, ask a question, then turn what you learned into a quiz or mock interview.
 
-## The engineering behind the experience
+---
 
-LearnFlow uses retrieval-augmented generation (RAG) for chat: it finds relevant passages in your selected sources and sends that evidence to the model. Summaries, quizzes, and interviews use bounded selections of processed source content.
+## A workspace that moves with your learning
+
+LearnFlow AI turns **PDFs, slides, images, and captioned YouTube videos** into a workspace for grounded chat, summaries, quizzes, and interview practice. References take you back to the page, slide, image, or timestamp behind an answer.
+
+| Bring your… | Turn it into… |
+| :--- | :--- |
+| **Questions** | Source-grounded conversations with citations and saved chat history. |
+| **Long reading lists** | Concise summaries, detailed explanations, or study guides. |
+| **Revision goals** | Single-answer, multiple-answer, short-answer, and mixed quizzes with server-side scoring. |
+| **Next interview** | Role-aware practice, optional résumé and job context, transcripts, and an evaluation report. |
+| **Need to verify** | Inspectable extracted content and references back to the original source location. |
+
+**Supported inputs:** PDF · PPTX · PNG · JPG/JPEG · public YouTube URLs with accessible captions.
+
+```text
+Add a source → Extract & chunk → Generate embeddings → Ready
+                                                      ↓
+                         Ask · Summarize · Quiz · Rehearse
+```
+
+Accounts, per-user source ownership, data export, deletion, and an admin usage view support the full workflow.
+
+## A closer look
+
+<table>
+  <tr>
+    <td width="50%">
+      <a href="docs/screenshots/interview.png"><img src="docs/screenshots/interview.png" alt="Mock interview transcript with readable questions and candidate responses in the dark Midnight Terminal theme" width="100%" /></a>
+      <p><strong>Practice the conversation</strong><br />Role-specific questions and a saved transcript.<br /><sub>Midnight Terminal · dark mode</sub></p>
+    </td>
+    <td width="50%">
+      <a href="docs/screenshots/report.png"><img src="docs/screenshots/report.png" alt="Mock interview evaluation with an overall score, strengths, areas for growth, and recommendations in the dark Blueprint Studio theme" width="100%" /></a>
+      <p><strong>Find your next improvement</strong><br />An overall assessment and actionable feedback.<br /><sub>Blueprint Studio · dark mode</sub></p>
+    </td>
+  </tr>
+</table>
+
+*Screenshots capture the actual frontend running locally with illustrative sample data. The sample conversation, feedback, and score demonstrate the interface; they are not a live evaluation or a quality benchmark. No personal account data is shown.*
+
+<details>
+<summary><strong>Nine palettes. Light and dark. Your kind of focus.</strong></summary>
+
+<br />
+
+| Warm & familiar | Clear & structured | Expressive & immersive |
+| :--- | :--- | :--- |
+| Olive Library | Midnight Terminal | Botanical Notes |
+| Classic Academy | Blueprint Studio | Creative Atelier |
+| Legal Archive | Daylight Desk | Neon Quest |
+
+Every palette supports light and dark mode, including readable interview transcripts and evaluation panels.
+
+</details>
+
+## From upload to understanding
+
+LearnFlow uses retrieval-augmented generation for chat: it retrieves passages from your selected sources and sends that evidence to the model. Summaries, quizzes, and interviews use bounded selections of processed source content.
 
 ```mermaid
 flowchart LR
-    A[Files / YouTube captions] --> B[Durable ingestion queue]
-    B --> C[Extract text + OCR]
-    C --> D[Optional visual interpretation]
-    D --> E[Chunks with source references]
-    E --> F[SQLite: text index + vectors]
-    F --> G[Select source context]
-    G --> H[Chat / Summary / Quiz / Interview]
+    A[Files or YouTube captions] --> B[Durable job queue]
+    B --> C[Extract text and OCR]
+    C --> D[Chunks with source references]
+    D --> E[Jina embeddings]
+    E --> F[(SQLite: text index and vectors)]
+    F --> G[Hybrid retrieval]
+    G --> H[Bedrock generation]
+    H --> I[Chat / Summary / Quiz / Interview]
 ```
 
-| Design choice | Why it matters |
-| --- | --- |
-| **Native text + OCR + visual interpretation** | Reads document text and images; optional descriptions add context for selected diagrams. Literal text and generated interpretations are stored separately. |
-| **Chunks respect source boundaries** | Retains page, slide, image, or timestamp references through indexing and retrieval. |
-| **Hybrid search in SQLite** | Combines FTS5 keyword search and dense embedding search using reciprocal rank fusion, without a separate vector database. Falls back to lexical results if query embeddings are unavailable. |
-| **A separate ingestion worker** | Keeps OCR and embedding out of upload requests. Processes one job at a time and requeues stale, interrupted work. |
-| **Source access checked on the server** | Restricts retrieval to authorized materials. Video chat excludes chunks extending beyond the supplied playback position. |
-| **Quiz scoring runs on the server** | Withholds answer keys when serving questions, then returns results and explanations after submission. |
+| Under the surface | What it gives you |
+| :--- | :--- |
+| **Text, OCR, and optional visual interpretation** | Native text and selected visual content are processed; literal extraction and generated interpretations stay separate. |
+| **Source-aware chunking** | Page, slide, image, and timestamp references stay attached to the content. |
+| **Hybrid retrieval in SQLite** | FTS5 keyword search and dense vector search are combined with reciprocal rank fusion. Query-embedding failures fall back to lexical results. |
+| **A separate ingestion worker** | OCR and embedding calls happen outside upload requests. Interrupted work can be requeued. |
+| **Server-side source permissions** | Retrieval is restricted to authorized materials. Video chat respects the supplied playback position. |
+| **Server-side quiz scoring** | Answer keys are withheld when serving questions, then returned with explanations after submission. |
 
-**Grounding has limits.** Chat refuses when it retrieves no eligible evidence. Its citations identify retrieved passages; they do not verify every generated claim. Extraction, retrieval, and model output can still be wrong.
+**Embeddings are part of the implemented pipeline.** Jina generates document and query vectors in the default configuration; SQLite stores document vectors beside the chunks. A separate vector database is not required by this implementation.
+
+**Grounding has limits.** Citations identify retrieved passages; they do not verify every generated claim. Extraction, retrieval, and model output can still be wrong.
 
 ## Run locally
 
@@ -139,22 +202,48 @@ These paths are Git-ignored. Back up the database and uploads together. Account 
 
 ## Deployment
 
-Host the frontend on **Cloudflare Pages** and keep the FastAPI API, worker, SQLite database, and uploads on one persistent machine.
+**Live application:** [long-darkness-46bf.shreesairam786001.workers.dev](https://long-darkness-46bf.shreesairam786001.workers.dev/)
 
-1. Push the `vm` branch and select it when importing the repository into Pages.
-2. Set build command `npm run build` and output directory `dist`.
-3. Give the API a stable HTTPS hostname through a named Cloudflare Tunnel mapped to `http://localhost:8000`.
-4. Before building, set the Pages variable `VITE_API_BASE_URL=https://api.your-domain.example`.
+The deployed frontend uses **Cloudflare Workers Static Assets**. The backend layout keeps the API, ingestion worker, SQLite database, and original uploads together on a **GCP VM with persistent disk**, reached through a Cloudflare Tunnel.
+
+| Component | Runs or persists in |
+| :--- | :--- |
+| React frontend | Cloudflare Workers Static Assets |
+| FastAPI and ingestion worker | GCP VM |
+| Accounts, extracted text, chunks, embedding vectors, history, and jobs | SQLite on the VM: `/var/lib/learnflow/learnflow.db` |
+| Original uploaded files | VM disk: `/var/lib/learnflow/uploads/` |
+| OCR | Google Document AI |
+| Embedding generation | Jina AI |
+| Generation and optional visual understanding | Amazon Bedrock |
+
+The browser sends requests to the backend's public HTTPS address. The GCP worker calls the configured providers and persists processed content on the VM. Cloudflare hosts the frontend assets; it does not hold the application's SQLite database or uploaded study materials.
+
+### Deploy your own copy
+
+1. Provision a persistent backend machine and configure provider secrets from `.env.example`.
+2. Run **both** the FastAPI API and `python -m backend.worker` under a process manager. Give both processes the same database and upload paths.
+3. Expose the API through HTTPS. A named Cloudflare Tunnel and your own domain provide a stable hostname.
+4. Set `VITE_API_BASE_URL` to the public API base URL **before building**. Include `/api` only when your deployment mounts the backend under that prefix.
 5. Set backend `LEARNFLOW_CORS_ORIGINS` to the exact frontend origin and restart the API.
-6. Keep the backend machine, API, worker, and tunnel online.
+6. Build with `npm run build` and publish `dist/` through Cloudflare Workers Static Assets or Cloudflare Pages.
+7. Test account creation → upload → **Ready** → cited answer from another browser.
 
-In a deployed frontend, `localhost` points to the visitor’s computer. Use the API’s HTTPS hostname and avoid exposing port 8000 directly through your router. The API command above uses development reload; use a persistent process without `--reload` for a hosted demonstration.
+```powershell
+# Example only: replace this with your backend's public HTTPS base URL.
+$env:VITE_API_BASE_URL="https://api.your-domain.example/api"
+npm run build
+```
+
+**Demo availability:** a Quick Tunnel has a temporary hostname that changes when it restarts. A separate frontend must be rebuilt with the new API address if that happens. The VM, API, worker, and tunnel must stay running during testing.
+
+The backend currently targets one persistent machine. Hosting, storage, and AI calls use their respective providers' billing and quotas; a deployed demo is not a guarantee of free or continuous service.
 
 ## Development and verification
 
 ```powershell
 npm run lint
 npm run build
+node --experimental-strip-types --test tests/auth-errors.test.mjs
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
 .\.venv\Scripts\python.exe -m compileall -q backend
 .\.venv\Scripts\python.exe -m pytest backend\tests -q
@@ -173,3 +262,13 @@ npm run build
 | **Search** | [`chunking.py`](backend/chunking.py), [`embeddings.py`](backend/embeddings.py), [`retrieval.py`](backend/retrieval.py) |
 | **Learning** | `backend/*_service.py` — chat, summaries, quizzes, and interviews |
 | **Validation and decisions** | [`backend/tests/`](backend/tests/), [`REPORT.md`](REPORT.md) |
+
+---
+
+<div align="center">
+
+**Your sources. Your questions. Your next step.**
+
+[Open LearnFlow AI ↗](https://long-darkness-46bf.shreesairam786001.workers.dev/)
+
+</div>
