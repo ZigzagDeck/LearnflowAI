@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { authErrorMessage } from './auth-errors'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -367,12 +368,7 @@ function AuthScreen({
       })
       const payload = await response.json()
       if (!response.ok) {
-        const msg = payload.detail || ''
-        if (response.status === 401 || msg.toLowerCase().includes('invalid')) throw new Error('Incorrect email or password. Please try again.')
-        if (response.status === 409 || msg.toLowerCase().includes('exist')) throw new Error('An account with this email already exists. Try signing in.')
-        if (response.status === 422 || msg.toLowerCase().includes('password')) throw new Error('Password must be at least 8 characters with one uppercase letter and one number.')
-        if (response.status === 429) throw new Error('Too many attempts. Please wait a moment and try again.')
-        throw new Error(msg || 'Something went wrong. Please try again.')
+        throw new Error(authErrorMessage(response.status, payload))
       }
       onAuthenticated(payload.token, payload.user)
     } catch (reason) {

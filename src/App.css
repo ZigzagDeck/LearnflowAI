@@ -4647,6 +4647,29 @@ body {
   background: color-mix(in srgb, var(--paper-raised) 88%, var(--olive-soft));
 }
 
+/* Interview transcripts and report answers use the active dark palette together. */
+:root[data-theme='dark'] :is(.interview-msg-text, .report-q-prompt) {
+  color: var(--ink);
+}
+
+:root[data-theme='dark'] :is(.report-q-answer, .report-q-feedback, .report-q-ideal) {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+:root[data-theme='dark'] .report-q-ideal {
+  border-left-color: var(--olive);
+  background: color-mix(in srgb, var(--paper) 88%, var(--olive-soft));
+}
+
+:root[data-theme='dark'] :is(.report-q-answer, .report-q-feedback, .report-q-ideal) p {
+  color: var(--ink);
+}
+
+:root[data-theme='dark'] :is(.report-q-answer, .report-q-feedback, .report-q-ideal) strong {
+  color: var(--accent-text);
+}
+
 :root[data-theme='dark'] input::placeholder,
 :root[data-theme='dark'] textarea::placeholder {
   color: color-mix(in srgb, var(--muted) 82%, transparent);
