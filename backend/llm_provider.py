@@ -466,7 +466,11 @@ class BedrockProvider:
             f"Create exactly {count} learning questions from the allowed "
             f"evidence below. {type_instruction} Every question needs a concise "
             "explanation and one or more evidence_indices referring to the E numbers "
-            "that support it. "
+            "that support it. evidence_indices are ONE-BASED source identifiers, "
+            f"and must contain only integers from 1 to {len(bounded_evidence)}. "
+            "For example, [E1] means evidence_indices [1], never [0]. "
+            "correct_option_indices are ZERO-BASED option positions; these are "
+            "different from evidence_indices. "
             "Distribute questions across the supplied evidence and avoid trivial "
             "word-matching questions. Return exactly this JSON shape: "
             '{"questions":[{"question":"...","question_type":"single_answer",'
