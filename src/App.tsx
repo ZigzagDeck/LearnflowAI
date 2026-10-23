@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
-import { authErrorMessage } from './auth-errors'
+import { apiErrorMessage, authErrorMessage } from './auth-errors'
+import { youtubeEmbedUrl } from './youtube'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -124,7 +125,7 @@ type ChatMessage = {
   message_id: string
   role: 'user' | 'assistant'
   content: string
-  citations: Array<{ source_id: string; source_type: string; chunk_id?: string; page?: number; slide?: number; image?: number; start_seconds?: number; end_seconds?: number }>
+  citations: Array<{ source_id: string; source_type: string; chunk_id?: string; page?: number | null; slide?: number | null; image?: number | null; start_seconds?: number | null; end_seconds?: number | null }>
   created_at: string
 }
 
@@ -308,8 +309,8 @@ function fileExtension(fileName: string) {
   return fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
 }
 
-function formatTimestamp(seconds = 0) {
-  const rounded = Math.max(0, Math.floor(seconds))
+function formatTimestamp(seconds: number | null = 0) {
+  const rounded = typeof seconds === 'number' && Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0
   const hours = Math.floor(rounded / 3600)
   const minutes = Math.floor((rounded % 3600) / 60)
   const remainder = rounded % 60
@@ -514,7 +515,12 @@ function App() {
   const [chatSourceIds, setChatSourceIds] = useState<string[]>([])
   const [chatVideoScopes, setChatVideoScopes] = useState<VideoScopeState>({})
   const [chatBusy, setChatBusy] = useState(false)
+  const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState('')
+  const chatRequestRef = useRef<AbortController | null>(null)
+  const videoRequestsRef = useRef(new Map<string, AbortController>())
+  const videoPlaybackDefaultsRef = useRef<Record<string, number>>({})
+  const workspaceVersionRef = useRef(0)
   const chatMessagesRef = useRef<HTMLDivElement>(null)
   const [quizSessionId, setQuizSessionId] = useState(() => crypto.randomUUID().replaceAll('-', ''))
   const [quizSourceIds, setQuizSourceIds] = useState<string[]>([])
@@ -596,11 +602,11 @@ function App() {
       try {
         const response = await apiFetch(`${API_BASE_URL}/auth/me`)
         const payload = await response.json()
-        if (!response.ok) throw new Error(payload.detail || 'Session expired.')
+        if (!response.ok) throw new Error(apiErrorMessage(payload, 'Session expired.'))
         if (active) setCurrentUser(payload)
       } catch {
-        window.localStorage.removeItem(AUTH_STORAGE_KEY)
         if (active) {
+          window.localStorage.removeItem(AUTH_STORAGE_KEY)
           setAuthToken('')
           setCurrentUser(null)
         }
@@ -613,11 +619,21 @@ function App() {
   }, [apiFetch, authToken])
 
   const clearPrivateWorkspace = () => {
+    workspaceVersionRef.current += 1
+    chatRequestRef.current?.abort()
+    chatRequestRef.current = null
+    videoRequestsRef.current.forEach((request) => request.abort())
+    videoRequestsRef.current.clear()
+    videoPlaybackDefaultsRef.current = {}
     setMaterials([])
     setChatSessions([])
     setChatMessages([])
     setChatSourceIds([])
     setChatVideoScopes({})
+    setChatQuestion('')
+    setChatError('')
+    setChatBusy(false)
+    setChatLoading(false)
     setQuizSourceIds([])
     setSummarySourceIds([])
     setInterviewSourceIds([])
@@ -625,13 +641,29 @@ function App() {
     setQuiz(null)
     setQuizAnswers({})
     setQuizResult(null)
+    setQuizError('')
+    setQuizBusy(false)
+    setSummaryResult(null)
+    setSummaryError('')
+    setSummaryBusy(false)
+    setHistoryMessage('')
+    setHistoryBusy(false)
+    setAdminUsers([])
+    setAdminError('')
+    setAdminBusy(false)
+    setExportBusy(false)
+    setVideoPreview(null)
     setExtractedContent([])
     setUploadedResourceId('')
     setSelectedFile(null)
     setYoutubeUrl('')
     setActiveYoutubeUrl('')
     setStatus('idle')
+    setMessage('')
+    setProgress(0)
     setExtractionStatus('idle')
+    setExtractionMessage('')
+    setProcessingProgress(0)
     setChatSessionId(crypto.randomUUID().replaceAll('-', ''))
     setQuizSessionId(crypto.randomUUID().replaceAll('-', ''))
     setInterviewSession(null)
@@ -639,6 +671,12 @@ function App() {
     setInterviewReport(null)
     setInterviewHistory([])
     setInterviewError('')
+    setInterviewJobRole('')
+    setInterviewJobDesc('')
+    setInterviewResume('')
+    setInterviewInput('')
+    setInterviewBusy(false)
+    setInterviewReportBusy(false)
   }
 
   const authenticated = (token: string, user: UserProfile) => {
@@ -659,14 +697,18 @@ function App() {
   }
 
   const exportAccountData = async () => {
+    const version = workspaceVersionRef.current
     setExportBusy(true)
     try {
       const response = await apiFetch(`${API_BASE_URL}/account/export`)
+      if (version !== workspaceVersionRef.current) return
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}))
-        throw new Error(payload.detail || 'Your data export could not be created.')
+        if (version !== workspaceVersionRef.current) return
+        throw new Error(apiErrorMessage(payload, 'Your data export could not be created.'))
       }
       const blob = await response.blob()
+      if (version !== workspaceVersionRef.current) return
       const downloadUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = downloadUrl
@@ -676,13 +718,17 @@ function App() {
       link.remove()
       URL.revokeObjectURL(downloadUrl)
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage(error instanceof Error ? error.message : 'Your data export could not be created.')
     } finally {
-      setExportBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setExportBusy(false)
+      }
     }
   }
 
   const loadHistories = useCallback(async (silent = false) => {
+    const version = workspaceVersionRef.current
     if (!silent) setHistoryBusy(true)
     try {
       const [materialsResponse, chatsResponse] = await Promise.all([
@@ -691,8 +737,9 @@ function App() {
       ])
       const materialsPayload = await materialsResponse.json()
       const chatsPayload = await chatsResponse.json()
-      if (!materialsResponse.ok) throw new Error(materialsPayload.detail || 'Your materials could not be loaded. Please refresh.')
-      if (!chatsResponse.ok) throw new Error(chatsPayload.detail || 'Your chat history could not be loaded.')
+      if (version !== workspaceVersionRef.current) return
+      if (!materialsResponse.ok) throw new Error(apiErrorMessage(materialsPayload, 'Your materials could not be loaded. Please refresh.'))
+      if (!chatsResponse.ok) throw new Error(apiErrorMessage(chatsPayload, 'Your chat history could not be loaded.'))
       const nextMaterials: MaterialRecord[] = materialsPayload.materials || []
       setMaterials(nextMaterials)
       setChatSessions(chatsPayload.sessions || [])
@@ -711,9 +758,10 @@ function App() {
       }
       setHistoryMessage('')
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage(error instanceof Error ? error.message : 'History could not be loaded. Please refresh.')
     } finally {
-      if (!silent) setHistoryBusy(false)
+      if (!silent && version === workspaceVersionRef.current) setHistoryBusy(false)
     }
   }, [apiFetch])
 
@@ -749,21 +797,45 @@ function App() {
     return () => window.clearInterval(timer)
   }, [materials, loadHistories])
 
-  const loadVideoScope = useCallback(async (sourceId: string) => {
-    try {
-      const response = await apiFetch(`${API_BASE_URL}/materials/${sourceId}/content`)
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The video transcript could not be loaded.')
-      const duration = Math.max(0, ...(payload.content || []).map((unit: ExtractedUnit) => unit.end_seconds || 0))
-      setChatVideoScopes((current) => ({
-        ...current,
-        [sourceId]: current[sourceId] || { duration, playback: duration },
-      }))
-    } catch (error) {
-      setChatError(error instanceof Error ? error.message : 'The video transcript could not be loaded.')
-      setChatSourceIds((current) => current.filter((id) => id !== sourceId))
+  useEffect(() => {
+    const selectedVideos = new Set(materials.filter((item) => item.status === 'ready' && item.source_type === 'video' && chatSourceIds.includes(item.resource_id)).map((item) => item.resource_id))
+    for (const [sourceId, request] of videoRequestsRef.current) {
+      if (!selectedVideos.has(sourceId)) {
+        request.abort()
+        videoRequestsRef.current.delete(sourceId)
+      }
     }
-  }, [apiFetch])
+    for (const sourceId of selectedVideos) {
+      if (chatVideoScopes[sourceId] || videoRequestsRef.current.has(sourceId)) continue
+      const request = new AbortController()
+      videoRequestsRef.current.set(sourceId, request)
+      const loadScope = async () => {
+        try {
+          const response = await apiFetch(`${API_BASE_URL}/materials/${sourceId}/content`, { signal: request.signal })
+          const payload = await response.json()
+          if (request.signal.aborted) return
+          if (!response.ok) throw new Error(apiErrorMessage(payload, 'The video transcript could not be loaded.'))
+          const duration = (payload.content || []).reduce((end: number, unit: ExtractedUnit) => Math.max(end, unit.end_seconds || 0), 0)
+          if (!Number.isFinite(duration) || duration <= 0) throw new Error('This video has no usable transcript timestamps. Please reprocess it.')
+          const savedPlayback = videoPlaybackDefaultsRef.current[sourceId]
+          const playback = Number.isFinite(savedPlayback) ? Math.max(0, Math.min(savedPlayback, duration)) : duration
+          setChatVideoScopes((current) => ({ ...current, [sourceId]: { duration, playback } }))
+        } catch (error) {
+          if (request.signal.aborted) return
+          setChatError(error instanceof Error ? error.message : 'The video transcript could not be loaded.')
+          setChatSourceIds((current) => current.filter((id) => id !== sourceId))
+        } finally {
+          if (videoRequestsRef.current.get(sourceId) === request) videoRequestsRef.current.delete(sourceId)
+        }
+      }
+      void loadScope()
+    }
+  }, [apiFetch, materials, chatSourceIds, chatVideoScopes])
+
+  useEffect(() => () => {
+    chatRequestRef.current?.abort()
+    videoRequestsRef.current.forEach((request) => request.abort())
+  }, [])
 
   const updateChatSource = (material: MaterialRecord, checked: boolean) => {
     if (checked && chatSourceIds.length >= 30) {
@@ -780,12 +852,16 @@ function App() {
       ? [...new Set([...current, material.resource_id])]
       : current.filter((id) => id !== material.resource_id))
     if (material.source_type === 'video') {
-      if (checked) void loadVideoScope(material.resource_id)
-      else setChatVideoScopes((current) => {
-        const next = { ...current }
-        delete next[material.resource_id]
-        return next
-      })
+      if (!checked) {
+        delete videoPlaybackDefaultsRef.current[material.resource_id]
+        videoRequestsRef.current.get(material.resource_id)?.abort()
+        videoRequestsRef.current.delete(material.resource_id)
+        setChatVideoScopes((current) => {
+          const next = { ...current }
+          delete next[material.resource_id]
+          return next
+        })
+      }
     }
   }
 
@@ -796,16 +872,18 @@ function App() {
   const summaryBulkIds = readyMaterials.slice(0, 12).map((item) => item.resource_id)
   const quizBulkIds = summaryBulkIds
   const interviewBulkIds = readyMaterials.slice(0, 5).map((item) => item.resource_id)
+  const pendingChatVideos = readyMaterials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id) && !chatVideoScopes[item.resource_id])
 
   const toggleAllChatSources = (select: boolean) => {
     if (!select) {
+      videoRequestsRef.current.forEach((request) => request.abort())
+      videoRequestsRef.current.clear()
       setChatSourceIds([])
       setChatVideoScopes({})
+      videoPlaybackDefaultsRef.current = {}
     } else {
       const selectedIds = chatBulkMaterials.map((item) => item.resource_id)
       setChatSourceIds(selectedIds)
-      chatBulkMaterials.filter((item) => item.source_type === 'video' && !chatSourceIds.includes(item.resource_id))
-        .forEach((item) => void loadVideoScope(item.resource_id))
     }
     setChatError('')
   }
@@ -837,6 +915,7 @@ function App() {
 
   const uploadFile = () => {
     if (!selectedFile || status === 'uploading') return
+    const version = workspaceVersionRef.current
 
     const formData = new FormData()
     formData.append('file', selectedFile)
@@ -845,9 +924,11 @@ function App() {
     request.open('POST', `${API_BASE_URL}/materials/upload`)
     request.setRequestHeader('Authorization', `Bearer ${authToken}`)
     request.upload.addEventListener('progress', (event) => {
+      if (version !== workspaceVersionRef.current) return
       if (event.lengthComputable) setProgress(Math.round((event.loaded / event.total) * 100))
     })
     request.addEventListener('load', () => {
+      if (version !== workspaceVersionRef.current) return
       if (request.status >= 200 && request.status < 300) {
         const response = JSON.parse(request.responseText)
         setStatus('success')
@@ -862,30 +943,33 @@ function App() {
         let detail = 'Upload failed. Please check your file and try again.'
         try {
           const parsed = JSON.parse(request.responseText)
-          const raw = parsed.detail || ''
           if (request.status === 413) detail = 'That file is too large. The maximum size is 100 MB.'
           else if (request.status === 415) detail = 'That file type is not supported. Please use PDF, PPTX, PNG, or JPEG.'
           else if (request.status === 401) detail = 'Your session has expired. Please sign in again.'
-          else if (raw) detail = raw
+          else detail = apiErrorMessage(parsed, detail)
         } catch { /* Keep the fallback message. */ }
         setStatus('error')
         setMessage(detail)
       }
     })
     request.addEventListener('error', () => {
+      if (version !== workspaceVersionRef.current) return
       setStatus('error')
       setMessage('The server could not be reached. Make sure the backend is running, then try again.')
     })
     setStatus('uploading')
     setProgress(0)
-    setMessage('Uploading to your local workspace…')
+    setMessage('Uploading to your workspace…')
     request.send(formData)
   }
 
   const loadExtractedContent = useCallback(async (resourceId: string) => {
+    const version = workspaceVersionRef.current
     const response = await apiFetch(`${API_BASE_URL}/materials/${resourceId}/content`)
+    if (version !== workspaceVersionRef.current) return
     const payload = await response.json()
-    if (!response.ok) throw new Error(payload.detail || 'The processed content could not be loaded.')
+    if (version !== workspaceVersionRef.current) return
+    if (!response.ok) throw new Error(apiErrorMessage(payload, 'The processed content could not be loaded.'))
     setExtractedContent(payload.content)
     setExtractionStatus('success')
     setProcessingProgress(100)
@@ -900,6 +984,7 @@ function App() {
   }, [apiFetch, loadHistories])
 
   const importYoutube = async () => {
+    const version = workspaceVersionRef.current
     if (!youtubeUrl.trim() || status === 'uploading') return
     setSelectedFile(null)
     setStatus('uploading')
@@ -912,8 +997,10 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: youtubeUrl.trim() }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The YouTube link could not be imported.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The YouTube link could not be imported.'))
       setActiveYoutubeUrl(payload.source_url)
       setUploadedResourceId(payload.resource_id)
       setExtractionStatus(payload.processing_job?.status || 'queued')
@@ -923,6 +1010,7 @@ function App() {
         : 'YouTube link added. Timestamped captions are queued for processing.')
       void loadHistories()
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setStatus('error')
       setMessage(error instanceof Error ? error.message : 'The YouTube link could not be imported.')
     }
@@ -939,7 +1027,7 @@ function App() {
       try {
         const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/status`)
         const payload = await response.json()
-        if (!response.ok) throw new Error(payload.detail || 'Processing status is unavailable.')
+        if (!response.ok) throw new Error(apiErrorMessage(payload, 'Processing status is unavailable.'))
         if (!active) return
         const job = payload.processing_job
         setProcessingProgress(job?.progress_percent || 0)
@@ -977,6 +1065,7 @@ function App() {
   }, [apiFetch, uploadedResourceId, extractionStatus, loadExtractedContent, loadHistories, activeYoutubeUrl, bedrockRuntime?.visual_understanding_enabled])
 
   const retryProcessing = async () => {
+    const version = workspaceVersionRef.current
     if (!uploadedResourceId || extractionStatus !== 'error') return
     setExtractionStatus('queued')
     setProcessingProgress(0)
@@ -985,10 +1074,13 @@ function App() {
       const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The material could not be re-queued.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The material could not be re-queued.'))
       setExtractionMessage('Waiting for the processing worker…')
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setExtractionStatus('error')
       setExtractionMessage(error instanceof Error ? error.message : 'The material could not be re-queued. Please try again.')
     }
@@ -996,7 +1088,9 @@ function App() {
 
   const askChat = async () => {
     const question = chatQuestion.trim()
-    if (!question || chatBusy || chatSourceIds.length === 0) return
+    if (!question || chatBusy || chatLoading || chatRequestRef.current || chatSourceIds.length === 0 || pendingChatVideos.length > 0) return
+    const request = new AbortController()
+    chatRequestRef.current = request
     const optimisticMessage: ChatMessage = {
       message_id: crypto.randomUUID(),
       role: 'user',
@@ -1011,6 +1105,7 @@ function App() {
     try {
       const response = await apiFetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
+        signal: request.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: chatSessionId,
@@ -1021,35 +1116,47 @@ function App() {
             .map(([sourceId, scope]) => ({ source_id: sourceId, playback_seconds: scope.playback })),
         }),
       })
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The answer could not be generated.')
+      const payload = await response.json().catch(() => null)
+      if (request.signal.aborted) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The answer could not be generated. Please try again.'))
+      if (!payload || typeof payload.answer !== 'string' || !payload.answer.trim() || payload.session_id !== chatSessionId) {
+        throw new Error('The server returned an incomplete answer. Please try again.')
+      }
       setChatMessages((current) => [
         ...current,
         { message_id: crypto.randomUUID(), role: 'assistant', content: payload.answer, citations: payload.citations || [], created_at: new Date().toISOString() },
       ])
       void loadHistories()
     } catch (error) {
+      if (request.signal.aborted) return
       setChatError(error instanceof Error ? error.message : 'The answer could not be generated.')
       setChatMessages((current) => current.filter((item) => item.message_id !== optimisticMessage.message_id))
-      setChatQuestion(question)
+      setChatQuestion((draft) => draft || question)
     } finally {
-      setChatBusy(false)
+      if (chatRequestRef.current === request) {
+        chatRequestRef.current = null
+        setChatBusy(false)
+      }
     }
   }
 
   useEffect(() => {
     const container = chatMessagesRef.current
     if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
-  }, [chatMessages, chatBusy])
+  }, [chatMessages, chatBusy, activeView])
 
   const handleChatKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
       event.preventDefault()
       void askChat()
     }
   }
 
   const startNewChat = () => {
+    chatRequestRef.current?.abort()
+    chatRequestRef.current = null
+    setChatBusy(false)
+    setChatLoading(false)
     setChatSessionId(crypto.randomUUID().replaceAll('-', ''))
     setChatMessages([])
     setChatError('')
@@ -1061,13 +1168,11 @@ function App() {
     setQuiz(null)
     setQuizAnswers({})
     setQuizResult(null)
-    setSummarySourceIds([])
-    setSummaryResult(null)
-    setSummaryError('')
     setQuizError('')
   }
 
   const generateQuiz = async () => {
+    const version = workspaceVersionRef.current
     if (quizBusy || quizSourceIds.length === 0) return
     setQuizBusy(true)
     setQuizError('')
@@ -1085,17 +1190,23 @@ function App() {
           quiz_type: quizType,
         }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The quiz could not be generated.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The quiz could not be generated.'))
       setQuiz(payload)
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setQuizError(error instanceof Error ? error.message : 'The quiz could not be generated.')
     } finally {
-      setQuizBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setQuizBusy(false)
+      }
     }
   }
 
   const submitQuiz = async () => {
+    const version = workspaceVersionRef.current
     if (!quiz || quizBusy || quiz.questions.some((question) => {
       const answer = quizAnswers[question.question_id]
       return question.question_type === 'short_answer' ? !answer?.text.trim() : !answer?.indices.length
@@ -1115,17 +1226,23 @@ function App() {
           })),
         }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The quiz could not be scored.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The quiz could not be scored.'))
       setQuizResult(payload)
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setQuizError(error instanceof Error ? error.message : 'The quiz could not be scored. Please try again.')
     } finally {
-      setQuizBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setQuizBusy(false)
+      }
     }
   }
 
   const generateSummary = async () => {
+    const version = workspaceVersionRef.current
     if (summaryBusy || summarySourceIds.length === 0) return
     setSummaryBusy(true)
     setSummaryError('')
@@ -1138,13 +1255,18 @@ function App() {
           style: summaryStyle,
         }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The summary could not be generated. Please try again.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The summary could not be generated. Please try again.'))
       setSummaryResult(payload)
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setSummaryError(error instanceof Error ? error.message : 'The summary could not be generated. Please try again.')
     } finally {
-      setSummaryBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setSummaryBusy(false)
+      }
     }
   }
 
@@ -1152,11 +1274,15 @@ function App() {
   const interviewSessionId = useRef(crypto.randomUUID().replaceAll('-', ''))
 
   const loadInterviewHistory = useCallback(async () => {
+    const version = workspaceVersionRef.current
     try {
       const response = await apiFetch(`${API_BASE_URL}/interview/history`)
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
+      if (version !== workspaceVersionRef.current) return
       if (response.ok) setInterviewHistory(payload.sessions || [])
-    } catch { /* Non-critical */ }
+    } catch {
+      if (version !== workspaceVersionRef.current) return /* Non-critical */ }
   }, [apiFetch])
 
   useEffect(() => {
@@ -1171,6 +1297,7 @@ function App() {
   }, [interviewMessages, interviewBusy])
 
   const startInterview = async () => {
+    const version = workspaceVersionRef.current
     if (!interviewJobRole.trim() || interviewBusy) return
     setInterviewBusy(true)
     setInterviewError('')
@@ -1191,8 +1318,10 @@ function App() {
           interview_type: interviewType,
         }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The interview could not be started. Please try again.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The interview could not be started. Please try again.'))
       setInterviewSession({
         interview_id: payload.interview_id,
         status: payload.status,
@@ -1203,13 +1332,17 @@ function App() {
       })
       setInterviewMessages([{ role: 'interviewer', content: payload.message, timestamp: new Date().toISOString() }])
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setInterviewError(error instanceof Error ? error.message : 'The interview could not be started. Please try again.')
     } finally {
-      setInterviewBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setInterviewBusy(false)
+      }
     }
   }
 
   const sendInterviewReply = async () => {
+    const version = workspaceVersionRef.current
     const text = interviewInput.trim()
     if (!text || !interviewSession || interviewBusy || interviewSession.status !== 'active') return
     const userMsg: InterviewMessage = { role: 'candidate', content: text, timestamp: new Date().toISOString() }
@@ -1223,20 +1356,26 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'Something went wrong. Please try again.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'Something went wrong. Please try again.'))
       setInterviewSession((prev) => prev ? { ...prev, status: payload.status, questions_asked: payload.questions_asked } : prev)
       setInterviewMessages((prev) => [...prev, { role: 'interviewer', content: payload.message, timestamp: new Date().toISOString() }])
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setInterviewError(error instanceof Error ? error.message : 'Something went wrong sending your response. Please try again.')
       setInterviewMessages((prev) => prev.filter((m) => m !== userMsg))
       setInterviewInput(text)
     } finally {
-      setInterviewBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setInterviewBusy(false)
+      }
     }
   }
 
   const fetchInterviewReport = async () => {
+    const version = workspaceVersionRef.current
     if (!interviewSession || interviewReportBusy) return
     setInterviewReportBusy(true)
     setInterviewError('')
@@ -1245,15 +1384,20 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The evaluation report could not be generated. Please try again.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The evaluation report could not be generated. Please try again.'))
       setInterviewReport(payload.report)
       setInterviewSession((prev) => prev ? { ...prev, status: 'reported' } : prev)
       void loadInterviewHistory()
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setInterviewError(error instanceof Error ? error.message : 'The report could not be generated. Please try again.')
     } finally {
-      setInterviewReportBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setInterviewReportBusy(false)
+      }
     }
   }
 
@@ -1266,20 +1410,26 @@ function App() {
   }
 
   const deleteInterviewSession = async (id: string) => {
+    const version = workspaceVersionRef.current
     try {
       await apiFetch(`${API_BASE_URL}/interview/${id}`, { method: 'DELETE' })
+      if (version !== workspaceVersionRef.current) return
       setInterviewHistory((prev) => prev.filter((s) => s.interview_id !== id))
-    } catch { /* Ignore */ }
+    } catch {
+      if (version !== workspaceVersionRef.current) return /* Ignore */ }
   }
 
   const openInterviewSession = async (id: string) => {
+    const version = workspaceVersionRef.current
     try {
       navigateTo('interview')
       setInterviewBusy(true)
       setInterviewError('')
       const response = await apiFetch(`${API_BASE_URL}/interview/${id}`)
+      if (version !== workspaceVersionRef.current) return
       if (!response.ok) throw new Error('Could not load interview session.')
       const session = await response.json()
+      if (version !== workspaceVersionRef.current) return
       setInterviewSession({
         interview_id: session.interview_id,
         status: session.status,
@@ -1302,9 +1452,12 @@ function App() {
       setInterviewReport(session.report || null)
       document.getElementById('interview')?.scrollIntoView({ behavior: 'smooth' })
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setInterviewError(error instanceof Error ? error.message : 'Could not open interview.')
     } finally {
-      setInterviewBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setInterviewBusy(false)
+      }
     }
   }
 
@@ -1316,47 +1469,68 @@ function App() {
   }
 
   const openChatSession = async (sessionId: string) => {
+    startNewChat()
+    videoRequestsRef.current.forEach((request) => request.abort())
+    videoRequestsRef.current.clear()
+    setChatSourceIds([])
+    setChatVideoScopes({})
+    const request = new AbortController()
+    chatRequestRef.current = request
+    setChatLoading(true)
     try {
       navigateTo('chat')
-      const response = await apiFetch(`${API_BASE_URL}/chat/history/${sessionId}`)
-      const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'This chat could not be opened.')
+      const response = await apiFetch(`${API_BASE_URL}/chat/history/${sessionId}`, { signal: request.signal })
+      const payload = await response.json().catch(() => null)
+      if (request.signal.aborted) return
+      if (!response.ok || !payload) throw new Error(apiErrorMessage(payload, 'This chat could not be opened.'))
       setChatSessionId(payload.session_id)
       setChatMessages(payload.messages || [])
       const readyIds = new Set(materials.filter((item) => item.status === 'ready').map((item) => item.resource_id))
       const restoredIds = (payload.source_ids || []).filter((id: string) => readyIds.has(id))
       setChatSourceIds(restoredIds)
-      const restoredVideos = materials.filter((item) => restoredIds.includes(item.resource_id) && item.source_type === 'video')
+      videoPlaybackDefaultsRef.current = payload.video_scopes || {}
       setChatVideoScopes({})
-      restoredVideos.forEach((item) => void loadVideoScope(item.resource_id))
       setChatError('')
       document.getElementById('chat')?.scrollIntoView({ behavior: 'smooth' })
     } catch (error) {
-      setHistoryMessage(error instanceof Error ? error.message : 'This chat could not be opened.')
+      if (!request.signal.aborted) setChatError(error instanceof Error ? error.message : 'This chat could not be opened.')
+    } finally {
+      if (chatRequestRef.current === request) {
+        chatRequestRef.current = null
+        setChatLoading(false)
+      }
     }
   }
 
   const deleteChatSession = async (session: ChatSession) => {
+    const version = workspaceVersionRef.current
     if (!window.confirm(`Delete this chat history?\n\n“${session.title}”`)) return
     try {
       const response = await apiFetch(`${API_BASE_URL}/chat/history/${session.session_id}`, { method: 'DELETE' })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The chat could not be deleted.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The chat could not be deleted.'))
       if (chatSessionId === session.session_id) startNewChat()
       await loadHistories()
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage('Chat history deleted.')
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage(error instanceof Error ? error.message : 'The chat could not be deleted.')
     }
   }
 
   const deleteMaterial = async (material: MaterialRecord) => {
+    const version = workspaceVersionRef.current
     if (material.status === 'processing') return
     if (!window.confirm(`Permanently delete “${material.original_filename}” and its processed data? This also removes its cached extraction, chunks, and embeddings.`)) return
     try {
       const response = await apiFetch(`${API_BASE_URL}/materials/${material.resource_id}`, { method: 'DELETE' })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The material could not be deleted.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The material could not be deleted.'))
       setChatSourceIds((current) => current.filter((id) => id !== material.resource_id))
       setQuizSourceIds((current) => current.filter((id) => id !== material.resource_id))
       setSummarySourceIds((current) => current.filter((id) => id !== material.resource_id))
@@ -1372,20 +1546,27 @@ function App() {
         setExtractionMessage('')
       }
       await loadHistories()
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage('Material and its processed data deleted.')
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage(error instanceof Error ? error.message : 'The material could not be deleted.')
     }
   }
 
   const retryHistoryMaterial = async (material: MaterialRecord) => {
+    const version = workspaceVersionRef.current
     try {
       const response = await apiFetch(`${API_BASE_URL}/materials/${material.resource_id}/process`, { method: 'POST' })
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'The material could not be queued for retry.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'The material could not be queued for retry.'))
       await loadHistories()
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage('Processing retry queued. The history will update when it finishes.')
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setHistoryMessage(error instanceof Error ? error.message : 'The material could not be queued for retry.')
     }
   }
@@ -1395,6 +1576,7 @@ function App() {
     referenceType?: string,
     referenceNumber?: number,
   ) => {
+    const version = workspaceVersionRef.current
     if (material.status !== 'ready') return
     navigateTo('materials')
     setHistoryMessage('')
@@ -1406,6 +1588,7 @@ function App() {
     setExtractionMessage(material.source_type === 'video' ? 'Opening saved transcript…' : 'Opening saved extracted content…')
     try {
       await loadExtractedContent(material.resource_id)
+      if (version !== workspaceVersionRef.current) return
       window.setTimeout(() => {
         const target = referenceType && referenceNumber
           ? document.getElementById(`content-${material.resource_id}-${referenceType}-${referenceNumber}`)
@@ -1415,12 +1598,13 @@ function App() {
         if (target) window.setTimeout(() => target.classList.remove('citation-highlight'), 2200)
       }, 0)
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setExtractionStatus('error')
       setExtractionMessage(error instanceof Error ? error.message : 'Saved content could not be opened.')
     }
   }
 
-  const renderCitations = (citations: ChatMessage['citations']) => (
+  const renderCitations = (citations: ChatMessage['citations']) => citations.length > 0 ? (
     <div className="citation-list" aria-label="Sources">
       <span className="citation-label">Sources</span>
       {citations.map((citation, index) => {
@@ -1429,19 +1613,19 @@ function App() {
         const location = citation.page ? `Page ${citation.page}`
           : citation.slide ? `Slide ${citation.slide}`
             : citation.image ? `Image ${citation.image}`
-              : citation.start_seconds !== undefined
+              : citation.start_seconds != null
                 ? `${formatTimestamp(citation.start_seconds)}–${formatTimestamp(citation.end_seconds)}` : 'Source'
         const label = `${sourceName} · ${location}`
         if (material?.source_type === 'video' && material.source_url) {
-          const videoId = new URL(material.source_url).searchParams.get('v')
-          return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => videoId && setVideoPreview({ title: label, embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?start=${Math.floor(citation.start_seconds || 0)}&autoplay=1` })}>▶ {label}</button>
+          const embedUrl = youtubeEmbedUrl(material.source_url, citation.start_seconds ?? 0)
+          return <button className="citation-chip" type="button" key={`${citation.source_id}-${citation.chunk_id || index}`} disabled={!embedUrl} onClick={() => embedUrl && setVideoPreview({ title: label, embedUrl })}>▶ {label}</button>
         }
         const referenceType = citation.page ? 'page' : citation.slide ? 'slide' : 'image'
         const referenceNumber = citation.page || citation.slide || citation.image
-        return <button className="citation-chip" type="button" key={`${citation.chunk_id || index}`} onClick={() => material && void openMaterial(material, referenceType, referenceNumber)}>↗ {label}</button>
+        return <button className="citation-chip" type="button" key={`${citation.source_id}-${citation.chunk_id || index}`} disabled={!material} title={material ? label : 'This source is no longer available.'} onClick={() => material && void openMaterial(material, referenceType, referenceNumber ?? undefined)}>↗ {label}</button>
       })}
     </div>
-  )
+  ) : null
 
   const handleDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -1451,19 +1635,25 @@ function App() {
   }
 
   const openAdmin = async () => {
+    const version = workspaceVersionRef.current
     if (currentUser?.role !== 'admin') return
     setAdminOpen(true)
     setAdminBusy(true)
     setAdminError('')
     try {
       const response = await apiFetch(`${API_BASE_URL}/admin/users`)
+      if (version !== workspaceVersionRef.current) return
       const payload = await response.json()
-      if (!response.ok) throw new Error(payload.detail || 'Admin metrics could not be loaded.')
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'Admin metrics could not be loaded.'))
       setAdminUsers(payload.users || [])
     } catch (error) {
+      if (version !== workspaceVersionRef.current) return
       setAdminError(error instanceof Error ? error.message : 'Admin metrics could not be loaded.')
     } finally {
-      setAdminBusy(false)
+      if (version === workspaceVersionRef.current) {
+        setAdminBusy(false)
+      }
     }
   }
 
@@ -1736,14 +1926,14 @@ function App() {
           </div>
           <div className="chat-layout">
             <aside className="source-picker">
-              <SelectionToolbar title="Use ready materials" availableIds={chatBulkMaterials.map((item) => item.resource_id)} selectedIds={chatSourceIds} totalCount={readyMaterials.length} limit={30} onToggle={toggleAllChatSources} />
+              <SelectionToolbar title="Use ready materials" availableIds={chatBulkMaterials.map((item) => item.resource_id)} selectedIds={chatSourceIds} totalCount={readyMaterials.length} limit={30} onToggle={toggleAllChatSources} disabled={chatBusy || chatLoading} />
               {readyMaterials.length ? (
                 readyMaterials.map((material) => (
                   <label className={`source-option${chatSourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
                     <input
                       type="checkbox"
                       checked={chatSourceIds.includes(material.resource_id)}
-                      disabled={!chatSourceIds.includes(material.resource_id) && (chatSourceIds.length >= 30 || (material.source_type === 'video' && readyMaterials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id)).length >= 10))}
+                      disabled={chatBusy || chatLoading || (!chatSourceIds.includes(material.resource_id) && (chatSourceIds.length >= 30 || (material.source_type === 'video' && readyMaterials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id)).length >= 10)))}
                       onChange={(event) => updateChatSource(material, event.target.checked)}
                     />
                     {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
@@ -1751,6 +1941,7 @@ function App() {
                   </label>
                 ))
               ) : <p className="history-muted">Finish processing a material to use it in chat.</p>}
+              {pendingChatVideos.length > 0 && <p className="scope-help" role="status">Loading {pendingChatVideos.length === 1 ? 'video transcript' : 'video transcripts'}…</p>}
               {Object.entries(chatVideoScopes).filter(([sourceId]) => chatSourceIds.includes(sourceId)).map(([sourceId, scope]) => {
                 const video = materials.find((item) => item.resource_id === sourceId)
                 return (
@@ -1763,19 +1954,21 @@ function App() {
                       id={`video-playback-${sourceId}`}
                       type="range"
                       min="0"
-                      max={Math.max(1, Math.ceil(scope.duration))}
-                      value={Math.min(scope.playback, Math.max(1, Math.ceil(scope.duration)))}
+                      max={scope.duration}
+                      step="any"
+                      value={scope.playback}
+                      aria-valuetext={formatTimestamp(scope.playback)}
                       onChange={(event) => setChatVideoScopes((current) => ({ ...current, [sourceId]: { ...scope, playback: Number(event.target.value) } }))}
-                      disabled={scope.duration <= 0}
+                      disabled={chatBusy || chatLoading}
                     />
                   </div>
                 )
               })}
-              {Object.keys(chatVideoScopes).length > 0 && <small className="scope-help">Each video defaults to its full transcript. Move its slider left to limit context to what you watched.</small>}
+              {chatSourceIds.some((id) => chatVideoScopes[id]) && <small className="scope-help">Newly selected videos use their full transcript. Move a slider left to limit context to what you watched.</small>}
             </aside>
             <div className="chat-panel">
-              <div className="chat-messages" aria-live="polite" aria-busy={chatBusy} ref={chatMessagesRef}>
-                {chatMessages.length ? chatMessages.map((item) => (
+              <div className="chat-messages" role="log" aria-label="Conversation" aria-live="polite" aria-busy={chatBusy || chatLoading} tabIndex={0} ref={chatMessagesRef}>
+                {chatLoading ? <p role="status">Loading conversation…</p> : chatMessages.length ? chatMessages.map((item) => (
                   <article className={`chat-message ${item.role}`} key={item.message_id}>
                     <strong>{item.role === 'user' ? 'You' : 'LearnFlow AI'}</strong>
                     {item.role === 'assistant' ? <MarkdownAnswer>{item.content}</MarkdownAnswer> : <p>{item.content}</p>}
@@ -1794,12 +1987,15 @@ function App() {
                   onKeyDown={handleChatKeyDown}
                   placeholder="Ask a question about your selected materials…"
                   aria-label="Question for LearnFlow AI"
+                  aria-describedby="chat-compose-help"
+                  disabled={chatLoading}
                   maxLength={4000}
                 />
-                <button type="submit" disabled={chatBusy || chatSourceIds.length === 0 || !chatQuestion.trim() || Object.entries(chatVideoScopes).some(([sourceId, scope]) => chatSourceIds.includes(sourceId) && scope.duration <= 0)}>
+                <button type="submit" disabled={chatBusy || chatLoading || chatSourceIds.length === 0 || !chatQuestion.trim() || pendingChatVideos.length > 0}>
                   {chatBusy ? 'Thinking…' : 'Ask'}
                 </button>
               </form>
+              <small id="chat-compose-help" className="scope-help">Enter to send · Shift+Enter for a new line{chatSourceIds.length === 0 ? ' · Select a ready material to ask a question.' : ''}</small>
             </div>
           </div>
         </section>
@@ -1849,7 +2045,7 @@ function App() {
         <section className="quiz-section workspace-page" id="quiz" hidden={activeView !== 'quiz'}>
           <div className="section-heading">
             <div className="section-title"><SectionGlyph kind="quiz" /><div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div></div>
-            <button className="secondary-button" type="button" onClick={startNewQuiz}>New quiz</button>
+            <button className="secondary-button" type="button" onClick={startNewQuiz} disabled={quizBusy}>New quiz</button>
           </div>
           <div className="quiz-layout">
             <aside className="source-picker">
@@ -1946,7 +2142,7 @@ function App() {
                           {result && (
                             <div className={`quiz-explanation ${result.correct ? 'correct' : 'incorrect'}`}>
                               <strong>{result.correct ? 'Correct' : 'Not quite'}</strong>
-                              <p>{result.explanation}</p>
+                              <MarkdownAnswer>{result.explanation}</MarkdownAnswer>
                               {!result.correct && result.question_type === 'short_answer' && result.accepted_answers.length > 0 && <p className="accepted-answer">Accepted answer: {result.accepted_answers[0]}</p>}
                               {renderCitations(result.citations)}
                             </div>
@@ -2361,7 +2557,7 @@ function App() {
 
         <section className="history-section workspace-page" id="history" hidden={activeView !== 'history'}>
           <div className="section-heading">
-            <div className="section-title"><SectionGlyph kind="history" /><div><p className="eyebrow">LOCAL DATABASE</p><h2>History and cleanup</h2></div></div>
+            <div className="section-title"><SectionGlyph kind="history" /><div><p className="eyebrow">YOUR WORKSPACE</p><h2>History and cleanup</h2></div></div>
             <button className="secondary-button" type="button" onClick={() => void loadHistories()} disabled={historyBusy}>
               {historyBusy ? 'Refreshing…' : 'Refresh history'}
             </button>
@@ -2439,7 +2635,7 @@ function App() {
               )) : <p className="history-muted">Completed chat turns will be saved here.</p>}
             </div>
           )}
-          <p className="history-footnote">Deleting a material removes its stored content, search index, and AI embeddings. Your data stays on this device only.</p>
+          <p className="history-footnote">Deleting a material removes its uploaded file, extracted content, search index, and embeddings from the server.</p>
         </section>
 
         <section className="how-section workspace-page" id="how-it-works" hidden={activeView !== 'materials'}>

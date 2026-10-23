@@ -15,8 +15,12 @@ export function authErrorMessage(status: number, payload: unknown): string {
   if (status === 409) return 'An account with this email already exists. Try signing in.'
   if (status === 429) return 'Too many attempts. Please wait a moment and try again.'
 
-  const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : undefined
-  return detailMessage(detail) || (status === 422
+  return apiErrorMessage(payload, status === 422
     ? 'Please check your email, password, and account details.'
     : 'Something went wrong. Please try again.')
+}
+
+export function apiErrorMessage(payload: unknown, fallback: string): string {
+  const detail = payload && typeof payload === 'object' && 'detail' in payload ? payload.detail : undefined
+  return detailMessage(detail) || fallback
 }

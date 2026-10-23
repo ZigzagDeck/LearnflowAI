@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { authErrorMessage } from '../src/auth-errors.ts'
+import { apiErrorMessage, authErrorMessage } from '../src/auth-errors.ts'
 
 test('shows FastAPI password validation without exposing submitted input', () => {
   const message = authErrorMessage(422, {
@@ -32,4 +32,11 @@ test('uses status-specific login, duplicate-account, and rate-limit messages', (
   assert.match(authErrorMessage(409, {}), /already exists/)
   assert.match(authErrorMessage(429, {}), /Too many attempts/)
   assert.match(authErrorMessage(503, {}), /Something went wrong/)
+})
+
+test('chat and learning errors format validation arrays without object coercion', () => {
+  assert.equal(apiErrorMessage({ detail: [{ loc: ['body', 'question'], msg: 'Question is too long', input: 'private draft' }] }, 'Try again.'), 'Question is too long')
+  for (const payload of [null, {}, { detail: {} }, { detail: [null] }]) {
+    assert.equal(apiErrorMessage(payload, 'Try again.'), 'Try again.')
+  }
 })

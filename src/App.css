@@ -2079,6 +2079,11 @@ h1 span {
   background: #ededda;
 }
 
+.citation-chip:disabled {
+  cursor: default;
+  opacity: .6;
+}
+
 .thinking-message {
   min-width: 230px;
 }
@@ -3546,6 +3551,11 @@ input[type="password"]::-ms-clear {
 :root[data-theme='dark'] .markdown-answer pre {
   color: var(--ink);
   background: color-mix(in srgb, var(--page) 82%, #000);
+}
+
+:root[data-theme='dark'] .markdown-answer pre code {
+  background: transparent;
+  color: inherit;
 }
 
 :root[data-theme='dark'] .citation-chip {
