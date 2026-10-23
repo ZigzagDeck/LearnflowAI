@@ -43,7 +43,6 @@
 }
 
 .nav-links {
-  display: flex;
   gap: 36px;
   margin-left: 80px;
   color: #7b8982;
@@ -167,20 +166,6 @@ h1 span {
   gap: 15px;
 }
 
-.icon-badge {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  font-size: 25px;
-}
-
-.upload-icon {
-  color: #287d69;
-  background: #cbe4d8;
-}
-
 .card-kicker {
   margin-bottom: 5px;
   font-size: 9px;
@@ -199,7 +184,6 @@ h2 {
   margin: 24px 0 25px;
   color: #698078;
   font-size: 14px;
-  line-height: 1.65;
 }
 
 .file-note {
@@ -1259,14 +1243,12 @@ footer span {
   width: min(440px, 100%);
   padding: 38px;
   border: 1px solid #d9d5bd;
-  border-radius: 20px;
   background: #fffdf6;
   box-shadow: 0 24px 70px rgba(70, 72, 40, .12);
 }
 
 .auth-card h1 {
   margin: 8px 0 10px;
-  color: var(--ink);
   font-family: 'Playfair Display', Georgia, serif;
   font-size: 34px;
 }
@@ -1307,7 +1289,6 @@ footer span {
   background: #686f3c;
   cursor: pointer;
   font: inherit;
-  font-weight: 700;
 }
 
 .auth-card form button.auth-submit:disabled {
@@ -1329,7 +1310,6 @@ footer span {
   margin-top: 15px;
   border: 0;
   background: transparent;
-  color: var(--olive-dark);
   cursor: pointer;
 }
 
@@ -1715,11 +1695,6 @@ h1 span {
   box-shadow: 0 24px 65px rgba(90, 94, 49, .18);
 }
 
-.upload-icon {
-  color: var(--olive-dark);
-  background: #d8dac0;
-}
-
 .card-description,
 .file-note {
   color: var(--muted);
@@ -1871,7 +1846,6 @@ h1 span {
 }
 
 .source-option>span {
-  min-width: 0;
   display: grid;
   gap: 2px;
 }
@@ -3646,12 +3620,10 @@ input[type="password"]::-ms-clear {
 }
 
 :root[data-theme='dark'][data-palette='terminal'] {
-  --olive: #70e0b2;
   --olive-dark: #91edc7;
   --olive-soft: #18352e;
   --page: #09111d;
   --page-glow: rgba(70, 211, 168, .1);
-  --cream: #0c1522;
   --paper: #101a28;
   --paper-raised: #152131;
   --ink: #e8f1ee;
@@ -3659,7 +3631,6 @@ input[type="password"]::-ms-clear {
   --line: #2d4050;
   --focus: rgba(112, 224, 178, .35);
   --selection: #215b49;
-  --selection-ink: #f5fffb;
 }
 
 :root[data-palette='daylight'] {
@@ -3685,7 +3656,6 @@ input[type="password"]::-ms-clear {
   --olive-soft: #343a35;
   --page: #171b19;
   --page-glow: rgba(179, 194, 182, .08);
-  --cream: #1d211e;
   --paper: #252a26;
   --paper-raised: #2b302c;
   --ink: #f1f3ee;
@@ -3717,9 +3687,7 @@ input[type="password"]::-ms-clear {
   --olive: #a9ce82;
   --olive-dark: #c0df9f;
   --olive-soft: #33412c;
-  --page: #21191d;
   --page-glow: rgba(206, 112, 163, .12);
-  --cream: #281e22;
   --paper: #302428;
   --paper-raised: #382b30;
   --ink: #faece9;
@@ -3727,7 +3695,6 @@ input[type="password"]::-ms-clear {
   --line: #594149;
   --focus: rgba(169, 206, 130, .34);
   --selection: #70425a;
-  --selection-ink: #fff7fa;
 }
 
 :root[data-palette='blueprint'] {
@@ -3829,7 +3796,6 @@ input[type="password"]::-ms-clear {
   --line: #57443c;
   --focus: rgba(222, 139, 121, .34);
   --selection: #6b4037;
-  --selection-ink: #fff8f5;
 }
 
 :root[data-palette='atelier'] {
@@ -3889,7 +3855,6 @@ input[type="password"]::-ms-clear {
   --olive-soft: #3d2856;
   --page: #100c1e;
   --page-glow: rgba(188, 72, 255, .19);
-  --cream: #151024;
   --paper: #1d172f;
   --paper-raised: #251c3a;
   --ink: #f4ecff;
@@ -4087,7 +4052,6 @@ input[type="password"]::-ms-clear {
 :root[data-palette='blueprint'] body {
   background-image: linear-gradient(var(--page-glow) 1px, transparent 1px), linear-gradient(90deg, var(--page-glow) 1px, transparent 1px);
   background-size: 28px 28px;
-  background-color: var(--page);
 }
 
 .brand-accent,
@@ -4627,7 +4591,7 @@ body {
   color: var(--accent-text);
 }
 
-:root[data-theme='dark'] :is(.upload-icon, .file-type-badge) {
+:root[data-theme='dark'] .file-type-badge {
   color: var(--accent-text);
   background: color-mix(in srgb, var(--olive-soft) 74%, var(--paper-raised));
 }

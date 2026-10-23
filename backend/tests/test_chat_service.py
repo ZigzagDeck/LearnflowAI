@@ -190,3 +190,22 @@ def test_chat_api_rejects_missing_playback_timestamp(configure_local_services):
             }
         )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("multi_video_scope", [False, True])
+def test_chat_api_persists_ordered_turn_and_playback_scope(configure_local_services, multi_video_scope):
+    payload = request().model_dump(mode="json")
+    if multi_video_scope:
+        payload["video_source_id"] = None
+        payload["playback_seconds"] = None
+        payload["video_scopes"] = [{"source_id": "video1", "playback_seconds": 30}]
+    with TestClient(app, headers={"Authorization": f"Bearer {configure_local_services['token']}"}) as client:
+        app.state.chat_service = GroundedChatService(Authorizer(), Retriever(), Provider())
+        response = client.post("/chat", json=payload)
+        assert response.status_code == 200
+        history = client.get("/chat/history/s1")
+    assert history.status_code == 200
+    saved = history.json()
+    assert saved["video_scopes"] == {"video1": 30}
+    assert [message["role"] for message in saved["messages"]] == ["user", "assistant"]
+    assert saved["messages"][1]["content"] == response.json()["answer"]

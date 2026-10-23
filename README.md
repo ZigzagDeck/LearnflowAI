@@ -243,13 +243,13 @@ The backend currently targets one persistent machine. Hosting, storage, and AI c
 ```powershell
 npm run lint
 npm run build
-node --experimental-strip-types --test tests/auth-errors.test.mjs
+npm test
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
 .\.venv\Scripts\python.exe -m compileall -q backend
 .\.venv\Scripts\python.exe -m pytest backend\tests -q
 ```
 
-[CI](.github/workflows/ci.yml) defines frontend lint/build, backend compilation/tests, and a Docker API health smoke check. Tests cover authentication and API contracts, uploads, extraction, chunking, retrieval, provider integrations, and learning services.
+[CI](.github/workflows/ci.yml) defines frontend lint/tests/build, backend compilation/tests, and a Docker API health smoke check. Frontend tests cover safe error messages, Markdown and LaTeX rendering, and citation previews. Backend tests cover authentication and API contracts, uploads, extraction, chunking, retrieval, provider integrations, learning services, and chat history ordering and scope isolation.
 
 ## Find your way around
 

@@ -4,7 +4,7 @@ Strict IDs and citation metadata let the UI, document retrieval and video retrie
 teams agree on interfaces without binding to a specific vector database or LLM.
 """
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -17,21 +17,6 @@ class SourceType(str, Enum):
     PPTX = "pptx"
     VIDEO = "video"
     IMAGE = "image"
-
-
-class MaterialStatus(str, Enum):
-    UPLOADED = "uploaded"
-    PROCESSING = "processing"
-    READY = "ready"
-    FAILED = "failed"
-
-
-class MaterialInfo(StrictModel):
-    source_id: str = Field(min_length=1, max_length=160)
-    source_type: SourceType
-    status: MaterialStatus
-    filename: str = Field(min_length=1)
-    error: str | None = None
 
 
 class YouTubeImportRequest(StrictModel):
@@ -96,11 +81,6 @@ class RetrievalHit(StrictModel):
     citation: Citation
     text: str = Field(min_length=1)
     score: float | None = Field(default=None, ge=0)
-
-
-class ChatTurn(StrictModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=12_000)
 
 
 class VideoScope(StrictModel):
@@ -200,8 +180,3 @@ class QuizSubmissionResponse(StrictModel):
     score: int = Field(ge=0)
     total: int = Field(ge=1)
     questions: list[QuizQuestionResult]
-
-
-class APIError(StrictModel):
-    detail: str
-    code: str

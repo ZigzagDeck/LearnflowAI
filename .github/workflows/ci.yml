@@ -27,8 +27,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
-      - name: Test authentication error handling
-        run: node --experimental-strip-types --test tests/auth-errors.test.mjs
+      - name: Run frontend regression tests
+        run: npm test
       - name: Typecheck and production build
         run: npm run build
 
