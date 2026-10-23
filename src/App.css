@@ -1947,6 +1947,7 @@ h1 span {
   margin-top: 7px;
   font-size: 13px;
   line-height: 1.68;
+  overflow-wrap: anywhere;
 }
 
 .markdown-answer> :first-child {
@@ -1959,6 +1960,28 @@ h1 span {
 
 .markdown-answer p {
   margin: .65em 0;
+  white-space: normal;
+}
+
+.markdown-answer strong {
+  font-size: inherit;
+}
+
+.markdown-answer .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: .25em;
+}
+
+.markdown-answer .katex-error {
+  color: inherit;
+  white-space: pre-wrap;
+}
+
+.markdown-answer img {
+  max-width: 100%;
+  height: auto;
 }
 
 .markdown-answer h1,
@@ -1994,6 +2017,8 @@ h1 span {
   border-radius: 8px;
   background: #323426;
   color: #f8f5e8;
+  white-space: pre;
+  overflow-wrap: normal;
 }
 
 .markdown-answer pre code {
@@ -2004,6 +2029,8 @@ h1 span {
 .markdown-answer table {
   width: 100%;
   border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
 }
 
 .markdown-answer th,

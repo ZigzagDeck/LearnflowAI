@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { authErrorMessage } from './auth-errors'
 import './App.css'
 
@@ -252,17 +250,10 @@ function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit,
   )
 }
 
+const RichMarkdownAnswer = lazy(() => import('./MarkdownAnswer'))
+
 function MarkdownAnswer({ children }: { children: string }) {
-  return (
-    <div className="markdown-answer">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ children: label, ...props }) => <a {...props} target="_blank" rel="noreferrer">{label}</a>,
-        }}
-      >{children}</ReactMarkdown>
-    </div>
-  )
+  return <Suspense fallback={<div className="markdown-answer">{children}</div>}><RichMarkdownAnswer>{children}</RichMarkdownAnswer></Suspense>
 }
 
 type QuizResult = {
