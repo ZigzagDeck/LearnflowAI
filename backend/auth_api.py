@@ -18,6 +18,8 @@ from .auth import (
     require_admin,
     validate_password,
 )
+from .account_recovery import request_account_email
+from .account_mail import MailUnavailableError
 from .contracts import AuthResponse, LoginRequest, RegisterRequest, UserProfile
 from .config import EXTRACTION_PIPELINE_VERSION
 from .resource_store import ResourceStoreError, UserRecord
@@ -55,6 +57,11 @@ def register(payload: RegisterRequest, request: Request) -> AuthResponse:
         raise
     except ResourceStoreError as exc:
         raise HTTPException(status_code=503, detail="Account registration is unavailable.") from exc
+    # Mail failures must not prevent registration or invalidate a usable session.
+    try:
+        request_account_email(store, user, "verify")
+    except (MailUnavailableError, ResourceStoreError, OSError):
+        pass
     return AuthResponse(token=token, expires_at=expires_at, user=_profile(user))
 
 

@@ -7,6 +7,7 @@ from backend.resource_store import ResourceStore
 
 @pytest.fixture(autouse=True)
 def configure_local_services(monkeypatch, tmp_path_factory):
+    monkeypatch.setenv("LEARNFLOW_EMAIL_MODE", "disabled")
     import backend.main as backend_main
     import backend.processing as backend_processing
 
