@@ -1,3 +1,4 @@
+import { materialErrorMessage, materialStatusLabel } from './material-feedback'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { apiErrorMessage, authErrorMessage } from './auth-errors'
@@ -489,7 +490,7 @@ function App() {
   const [historyTab, setHistoryTab] = useState<'processed' | 'chat' | 'interview'>('processed')
   const [historyMessage, setHistoryMessage] = useState('')
   const [historyBusy, setHistoryBusy] = useState(false)
-  const [ocrRuntime, setOcrRuntime] = useState<OcrRuntime | null>(null)
+  const [, setOcrRuntime] = useState<OcrRuntime | null>(null)
   const [bedrockRuntime, setBedrockRuntime] = useState<BedrockRuntime | null>(null)
   // Interview state
   const [interviewJobRole, setInterviewJobRole] = useState('')
@@ -894,17 +895,17 @@ function App() {
         setUploadedResourceId(response.resource_id)
         setExtractionStatus(response.processing_job?.status === 'completed' ? 'queued' : (response.processing_job?.status || 'queued'))
         setMessage(response.deduplicated
-          ? 'This material already exists in your workspace. Its saved processing result will be reused.'
-          : 'File uploaded. Text extraction and AI processing have been queued automatically.')
+          ? 'This file is already in your workspace. We will open the saved material.'
+          : 'File uploaded. We are getting it ready for your questions.')
         void loadHistories()
       } else {
         let detail = 'Upload failed. Please check your file and try again.'
         try {
           const parsed = JSON.parse(request.responseText)
           if (request.status === 413) detail = 'That file is too large. The maximum size is 100 MB.'
-          else if (request.status === 415) detail = 'That file type is not supported. Please use PDF, PPTX, PNG, or JPEG.'
+          else if (request.status === 415) detail = materialErrorMessage(apiErrorMessage(parsed, ''), 'That file type is not supported. Please use PDF, PPTX, PNG, or JPEG.')
           else if (request.status === 401) detail = 'Your session has expired. Please sign in again.'
-          else detail = apiErrorMessage(parsed, detail)
+          else detail = materialErrorMessage(apiErrorMessage(parsed, detail), detail)
         } catch { /* Keep the fallback message. */ }
         setStatus('error')
         setMessage(detail)
@@ -913,7 +914,7 @@ function App() {
     request.addEventListener('error', () => {
       if (version !== workspaceVersionRef.current) return
       setStatus('error')
-      setMessage('The server could not be reached. Make sure the backend is running, then try again.')
+      setMessage('We could not connect. Check your internet connection and try uploading again.')
     })
     setStatus('uploading')
     setProgress(0)
@@ -932,12 +933,14 @@ function App() {
     setExtractionStatus('success')
     setProcessingProgress(100)
     const referenceType = payload.content[0]?.reference_type
-    const units = referenceType === 'page' ? 'pages'
-      : referenceType === 'slide' ? 'slides'
-        : referenceType === 'timestamp' ? 'caption segments' : 'images'
+    const unit = referenceType === 'page' ? 'page'
+      : referenceType === 'slide' ? 'slide'
+        : referenceType === 'timestamp' ? 'caption segment' : 'image'
+    const units = `${unit}${payload.content.length === 1 ? '' : 's'}`
+    setMessage('')
     setExtractionMessage(referenceType === 'timestamp'
-      ? `Indexed ${payload.content.length} timestamped caption segments.`
-      : `Processed ${payload.content.length} ${units} successfully.`)
+      ? 'Your video is ready. You can now ask questions, create a summary, or take a quiz.'
+      : `Your material is ready (${payload.content.length} ${units}). You can now ask questions, create a summary, or take a quiz.`)
     void loadHistories()
   }, [apiFetch, loadHistories])
 
@@ -964,13 +967,13 @@ function App() {
       setExtractionStatus(payload.processing_job?.status || 'queued')
       setStatus('success')
       setMessage(payload.deduplicated
-        ? 'This YouTube video already exists. Its saved transcript will be reused.'
-        : 'YouTube link added. Timestamped captions are queued for processing.')
+        ? 'This video is already in your workspace. We will open its saved captions.'
+        : 'Video added. We are getting its captions ready for your questions.')
       void loadHistories()
     } catch (error) {
       if (version !== workspaceVersionRef.current) return
       setStatus('error')
-      setMessage(error instanceof Error ? error.message : 'The YouTube link could not be imported.')
+      setMessage(materialErrorMessage(error instanceof Error ? error.message : '', 'We could not add this video. Check the link and try again.'))
     }
   }
 
@@ -993,21 +996,19 @@ function App() {
           await loadExtractedContent(uploadedResourceId)
         } else if (payload.status === 'failed' || job?.status === 'failed') {
           setExtractionStatus('error')
-          setExtractionMessage(job?.error || payload.error || 'Material processing failed. You can retry it.')
+          setExtractionMessage(materialErrorMessage(job?.error || payload.error))
           void loadHistories()
         } else if (job?.status === 'processing') {
           setExtractionStatus('processing')
-          setExtractionMessage(job.progress_total
-            ? `Analyzing and extracting text from material… ${job.progress_current} of ${job.progress_total}`
-            : activeYoutubeUrl ? 'Retrieving timestamped video captions…' : 'Preparing intelligent document extraction…')
+          setExtractionMessage(activeYoutubeUrl ? 'Getting your video ready. You can keep using your workspace.' : 'Getting your file ready. You can keep using your workspace.')
         } else {
           setExtractionStatus('queued')
-          setExtractionMessage('Preparing document for processing…')
+          setExtractionMessage('Your material is waiting to get ready. You can keep using your workspace.')
         }
       } catch (error) {
         if (active) {
           setExtractionStatus('error')
-          setExtractionMessage(error instanceof Error ? error.message : 'Processing status is unavailable.')
+          setExtractionMessage(materialErrorMessage(error instanceof Error ? error.message : '', 'We could not check whether your material is ready. Please try again.'))
         }
       } finally {
         polling = false
@@ -1027,7 +1028,7 @@ function App() {
     if (!uploadedResourceId || extractionStatus !== 'error') return
     setExtractionStatus('queued')
     setProcessingProgress(0)
-    setExtractionMessage('Re-queuing for processing…')
+    setExtractionMessage('Trying again…')
     try {
       const response = await apiFetch(`${API_BASE_URL}/materials/${uploadedResourceId}/process`, {
         method: 'POST',
@@ -1036,11 +1037,11 @@ function App() {
       const payload = await response.json()
       if (version !== workspaceVersionRef.current) return
       if (!response.ok) throw new Error(apiErrorMessage(payload, 'The material could not be re-queued.'))
-      setExtractionMessage('Waiting for the processing worker…')
+      setExtractionMessage('Your material is waiting to get ready. You can keep using your workspace.')
     } catch (error) {
       if (version !== workspaceVersionRef.current) return
       setExtractionStatus('error')
-      setExtractionMessage(error instanceof Error ? error.message : 'The material could not be re-queued. Please try again.')
+      setExtractionMessage(materialErrorMessage(error instanceof Error ? error.message : '', 'We could not try again just now. Please try again later.'))
     }
   }
 
@@ -1482,7 +1483,7 @@ function App() {
   const deleteMaterial = async (material: MaterialRecord) => {
     const version = workspaceVersionRef.current
     if (material.status === 'processing') return
-    if (!window.confirm(`Permanently delete “${material.original_filename}” and its processed data? This also removes its cached extraction, chunks, and embeddings.`)) return
+    if (!window.confirm(`Permanently delete “${material.original_filename}” and its saved content? This cannot be undone.`)) return
     try {
       const response = await apiFetch(`${API_BASE_URL}/materials/${material.resource_id}`, { method: 'DELETE' })
       if (version !== workspaceVersionRef.current) return
@@ -1522,10 +1523,10 @@ function App() {
       if (!response.ok) throw new Error(apiErrorMessage(payload, 'The material could not be queued for retry.'))
       await loadHistories()
       if (version !== workspaceVersionRef.current) return
-      setHistoryMessage('Processing retry queued. The history will update when it finishes.')
+      setHistoryMessage('Trying again. This material will update here when it is ready.')
     } catch (error) {
       if (version !== workspaceVersionRef.current) return
-      setHistoryMessage(error instanceof Error ? error.message : 'The material could not be queued for retry.')
+      setHistoryMessage(materialErrorMessage(error instanceof Error ? error.message : '', 'We could not try again just now. Please try again later.'))
     }
   }
 
@@ -1543,7 +1544,7 @@ function App() {
     setStatus('success')
     setActiveYoutubeUrl(material.source_url || '')
     setExtractionStatus('processing')
-    setExtractionMessage(material.source_type === 'video' ? 'Opening saved transcript…' : 'Opening saved extracted content…')
+    setExtractionMessage(material.source_type === 'video' ? 'Opening saved transcript…' : 'Opening your saved material…')
     try {
       await loadExtractedContent(material.resource_id)
       if (version !== workspaceVersionRef.current) return
@@ -1774,7 +1775,7 @@ function App() {
             </div>
             <p className="file-note">PDF, PPTX, PNG or JPEG · Up to 100 MB</p>
             <p className="file-note">
-              Intelligent text extraction{ocrRuntime?.execution === 'google_cloud' ? ' (enhanced cloud mode)' : ''} and visual analysis enabled
+              Once your material is ready, use it for questions, summaries, and quizzes.
             </p>
             <div className="source-divider"><span>or use a video link</span></div>
             <div className="youtube-row">
@@ -1806,7 +1807,7 @@ function App() {
                 {uploadedResourceId && (
                   <>
                     {(extractionStatus === 'queued' || extractionStatus === 'processing') && (
-                      <div className="progress-track" aria-label={`Processing ${processingProgress}%`}>
+                      <div className="progress-track" aria-label="Getting your file ready">
                         <div style={{ width: `${processingProgress}%` }} />
                       </div>
                     )}
@@ -1816,10 +1817,10 @@ function App() {
                       onClick={retryProcessing}
                       disabled={extractionStatus !== 'error'}
                     >
-                      {extractionStatus === 'queued' ? 'Queued for processing'
-                        : extractionStatus === 'processing' ? `Processing · ${processingProgress}%`
-                          : extractionStatus === 'success' ? 'Processing complete ✓'
-                            : 'Retry processing'}
+                      {extractionStatus === 'queued' ? 'Waiting to get ready'
+                        : extractionStatus === 'processing' ? 'Getting your file ready…'
+                          : extractionStatus === 'success' ? 'Ready to use ✓'
+                            : 'Try again'}
                     </button>
                   </>
                 )}
@@ -1835,22 +1836,22 @@ function App() {
                   <div className="progress-track"><div style={{ width: `${processingProgress}%` }} /></div>
                 )}
                 <button className="extract-button" type="button" onClick={retryProcessing} disabled={extractionStatus !== 'error'}>
-                  {extractionStatus === 'queued' ? 'Queued for captions'
-                    : extractionStatus === 'processing' ? `Processing captions · ${processingProgress}%`
-                      : extractionStatus === 'success' ? 'Timestamped captions ready'
-                        : 'Retry caption import'}
+                  {extractionStatus === 'queued' ? 'Waiting to get ready'
+                    : extractionStatus === 'processing' ? 'Getting your video ready…'
+                      : extractionStatus === 'success' ? 'Video ready to use'
+                        : 'Try again'}
                 </button>
               </div>
             )}
-            {message && <p className={`upload-message ${status}`}>{message}</p>}
-            {extractionMessage && <p className={`upload-message ${extractionStatus}`}>{extractionMessage}</p>}
+            {message && <p className={`upload-message ${status}`} role={status === 'error' ? 'alert' : 'status'}>{message}</p>}
+            {extractionMessage && <p className={`upload-message ${extractionStatus}`} role={extractionStatus === 'error' ? 'alert' : 'status'}>{extractionMessage}</p>}
           </article>
 
           <article className="workspace-card" id="workspace-content">
             <div className="workspace-header">
               <div className="section-title"><SectionGlyph kind="materials" /><div>
                 <p className="card-kicker">LEARNING WORKSPACE</p>
-                <h2>Your space is ready</h2>
+                <h2>Your study material</h2>
               </div></div>
               <span className="status-pill"><span /> {extractedContent.length > 0 ? 'Content ready' : 'Empty'}</span>
             </div>
@@ -1862,8 +1863,8 @@ function App() {
                       <span>{unit.reference_type === 'timestamp'
                         ? `${formatTimestamp(unit.start_seconds)}–${formatTimestamp(unit.end_seconds)}`
                         : `${unit.reference_type === 'page' ? 'Page' : unit.reference_type === 'slide' ? 'Slide' : 'Image'} ${unit.reference_number}`}</span>
-                      <small>{unit.extraction_method ? 'AI text analysis' : 'Document text'}</small>
-                      {!unit.has_text && <small>No extractable text</small>}
+                      <small>Text from your material</small>
+                      {!unit.has_text && <small>No readable text</small>}
                     </div>
                     <p>{(unit.literal_text ?? unit.text) || 'No readable text could be detected in this section.'}</p>
                     {unit.visual_description && <div className="visual-insight"><strong>Visual interpretation</strong><MarkdownAnswer>{unit.visual_description}</MarkdownAnswer></div>}
@@ -1877,7 +1878,7 @@ function App() {
                   <span className="paper paper-front">✧</span>
                 </div>
                 <h3>Nothing here yet</h3>
-                <p>Your extracted learning material will appear here.</p>
+                <p>Add a file or video. Its readable content will appear here when it is ready.</p>
               </div>
             )}
           </article>
@@ -1904,7 +1905,7 @@ function App() {
                     <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                   </label>
                 ))
-              ) : <p className="history-muted">Finish processing a material to use it in chat.</p>}
+              ) : <p className="history-muted">Add a material and wait until it is ready to ask questions.</p>}
               {pendingChatVideos.length > 0 && <p className="scope-help" role="status">Loading {pendingChatVideos.length === 1 ? 'video transcript' : 'video transcripts'}…</p>}
               {Object.entries(chatVideoScopes).filter(([sourceId]) => chatSourceIds.includes(sourceId)).map(([sourceId, scope]) => {
                 const video = materials.find((item) => item.resource_id === sourceId)
@@ -1985,7 +1986,7 @@ function App() {
                   {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
                   <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                 </label>
-              )) : <p className="history-muted">Finish processing a material to summarize it.</p>}
+              )) : <p className="history-muted">Add a material and wait until it is ready to create a summary.</p>}
               <div className="quiz-controls">
                 <label htmlFor="summary-style">Summary style</label>
                 <select id="summary-style" value={summaryStyle} onChange={(event) => setSummaryStyle(event.target.value as typeof summaryStyle)} disabled={summaryBusy}>
@@ -2029,7 +2030,7 @@ function App() {
                     <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                   </label>
                 ))
-              ) : <p className="history-muted">Finish processing a material to generate a quiz.</p>}
+              ) : <p className="history-muted">Add a material and wait until it is ready to create a quiz.</p>}
               <div className="quiz-controls">
                 <label htmlFor="quiz-count">Questions</label>
                 <input id="quiz-count" type="number" min="1" max="20" value={quizCount} onChange={(event) => setQuizCount(Math.min(20, Math.max(1, Number(event.target.value) || 1)))} disabled={quizBusy} />
@@ -2546,15 +2547,15 @@ function App() {
                   <article className="history-card" key={material.resource_id}>
                     {material.thumbnail_url && <img className="history-thumbnail" src={material.thumbnail_url} alt="" />}
                     <div className="history-card-main">
-                      <div className="history-title-row"><h3 title={material.original_filename}>{material.original_filename}</h3><span className={`history-status ${material.status}`}>{material.status}</span></div>
+                      <div className="history-title-row"><h3 title={material.original_filename}>{material.original_filename}</h3><span className={`history-status ${material.status}`}>{materialStatusLabel(material.status)}</span></div>
                       <p>{material.source_type === 'video' ? 'YouTube video' : material.source_type === 'pdf' ? 'PDF document' : material.source_type === 'pptx' ? 'Presentation' : 'Image'} · Added {formatDate(material.created_at)}</p>
-                      {processingError && <p className="history-error">Processing error: {processingError}</p>}
+                      {processingError && <p className="history-error">{materialErrorMessage(processingError)}</p>}
                     </div>
                     <div className="history-actions">
                       {material.status === 'ready' && <button className="secondary-button" type="button" onClick={() => void openMaterial(material)}>{material.source_type === 'video' ? 'View transcript' : 'View content'}</button>}
                       {material.status === 'failed' && <button className="secondary-button" type="button" onClick={() => void retryHistoryMaterial(material)}>Retry</button>}
                       <button className="delete-button" type="button" disabled={material.status === 'processing'} onClick={() => void deleteMaterial(material)}>
-                        {material.status === 'processing' ? 'Processing…' : 'Delete data'}
+                        {material.status === 'processing' ? 'Getting ready…' : 'Delete material'}
                       </button>
                     </div>
                   </article>
@@ -2599,7 +2600,7 @@ function App() {
               )) : <p className="history-muted">Completed chat turns will be saved here.</p>}
             </div>
           )}
-          <p className="history-footnote">Deleting a material removes its uploaded file, extracted content, search index, and embeddings from the server.</p>
+          <p className="history-footnote">Deleting a material removes it and its saved content from your workspace.</p>
         </section>
 
         <section className="how-section workspace-page" id="how-it-works" hidden={activeView !== 'materials'}>
