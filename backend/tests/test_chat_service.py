@@ -153,6 +153,19 @@ def test_failed_provider_returns_unavailable_error():
         )
 
 
+def test_conversation_history_receives_current_source_and_playback_scope():
+    class History:
+        def get_recent_chat_turns(self, session_id, owner_user_id, **scope):
+            assert session_id == "s1"
+            assert owner_user_id == "learner"
+            assert scope["source_ids"] == ["doc1", "video1"]
+            assert scope["video_scopes"] == {"video1": 30}
+            return []
+
+    service = GroundedChatService(Authorizer(), Retriever(), Provider(), history=History())
+    assert asyncio.run(service.answer(request(), "learner")).grounded
+
+
 def test_chat_api_is_fail_closed_when_service_is_not_configured(configure_local_services):
     with TestClient(
         app,

@@ -346,6 +346,12 @@ class ResourceStore:
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created "
                 "ON chat_messages(session_id, created_at)"
             )
+            message_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(chat_messages)").fetchall()
+            }
+            if "scope_json" not in message_columns:
+                connection.execute("ALTER TABLE chat_messages ADD COLUMN scope_json TEXT")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS quiz_attempts (
@@ -1074,11 +1080,14 @@ class ResourceStore:
         answer: str,
         source_ids: Sequence[str],
         citations: Sequence[Mapping[str, object]],
+        *,
+        video_scopes: Mapping[str, float] | None = None,
     ) -> None:
         """Persist one completed learner question and its grounded answer."""
         now = datetime.now(UTC).isoformat()
         title = question.strip().replace("\n", " ")[:120] or "Learning chat"
         normalized_sources = list(dict.fromkeys(source_ids))
+        scope_json = self._chat_scope(normalized_sources, video_scopes)
         try:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -1114,11 +1123,12 @@ class ResourceStore:
                 connection.executemany(
                     """
                     INSERT INTO chat_messages (
-                        message_id, session_id, role, content, citations_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        message_id, session_id, role, content, citations_json, created_at,
+                        scope_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
-                        (uuid.uuid4().hex, session_id, "user", question, "[]", now),
+                        (uuid.uuid4().hex, session_id, "user", question, "[]", now, scope_json),
                         (
                             uuid.uuid4().hex,
                             session_id,
@@ -1126,6 +1136,7 @@ class ResourceStore:
                             answer,
                             json.dumps(list(citations)),
                             now,
+                            scope_json,
                         ),
                     ],
                 )
@@ -1177,9 +1188,9 @@ class ResourceStore:
                     return None
                 messages = connection.execute(
                     """
-                    SELECT message_id, role, content, citations_json, created_at
+                    SELECT message_id, role, content, citations_json, created_at, scope_json
                     FROM chat_messages WHERE session_id = ?
-                    ORDER BY created_at ASC, message_id ASC
+                    ORDER BY rowid ASC
                     """,
                     (session_id,),
                 ).fetchall()
@@ -1187,6 +1198,10 @@ class ResourceStore:
                 "session_id": session["session_id"],
                 "title": session["title"],
                 "source_ids": json.loads(session["source_ids_json"]),
+                "video_scopes": (
+                    json.loads(messages[-1]["scope_json"])["video_scopes"]
+                    if messages and messages[-1]["scope_json"] else {}
+                ),
                 "created_at": session["created_at"],
                 "updated_at": session["updated_at"],
                 "messages": [
@@ -1203,6 +1218,15 @@ class ResourceStore:
         except (sqlite3.Error, ValueError, TypeError) as exc:
             raise ResourceStoreError("Could not read chat history.") from exc
 
+    @staticmethod
+    def _chat_scope(
+        source_ids: Sequence[str], video_scopes: Mapping[str, float] | None = None
+    ) -> str:
+        return json.dumps({
+            "source_ids": sorted(set(source_ids)),
+            "video_scopes": {key: float(value) for key, value in (video_scopes or {}).items()},
+        }, sort_keys=True)
+
     def get_recent_chat_turns(
         self,
         session_id: str,
@@ -1210,9 +1234,12 @@ class ResourceStore:
         *,
         limit: int = 8,
         source_ids: Sequence[str] | None = None,
+        video_scopes: Mapping[str, float] | None = None,
     ) -> list[dict[str, str]]:
         """Return bounded, server-owned context for follow-up questions."""
-        bounded_limit = max(1, min(12, limit))
+        # Always preserve complete question/answer pairs.
+        bounded_limit = max(2, min(12, limit))
+        bounded_limit -= bounded_limit % 2
         try:
             with self._connect() as connection:
                 owned = connection.execute(
@@ -1228,18 +1255,29 @@ class ResourceStore:
                     saved_sources = set(json.loads(owned["source_ids_json"]))
                     if saved_sources != set(source_ids):
                         return []
+                expected_scope = self._chat_scope(
+                    source_ids if source_ids is not None else json.loads(owned["source_ids_json"]),
+                    video_scopes,
+                )
                 rows = connection.execute(
                     """
-                    SELECT role, content FROM chat_messages
+                    SELECT role, content, scope_json FROM chat_messages
                     WHERE session_id = ?
-                    ORDER BY created_at DESC, message_id DESC
+                    ORDER BY rowid DESC
                     LIMIT ?
                     """,
                     (session_id, bounded_limit),
                 ).fetchall()
+            scoped_rows = []
+            for row in rows:
+                # Stop at a source/playback change. Legacy rows have no scope;
+                # they remain viewable but cannot safely supply follow-up context.
+                if row["scope_json"] != expected_scope:
+                    break
+                scoped_rows.append(row)
             return [
                 {"role": row["role"], "content": str(row["content"])[:4_000]}
-                for row in reversed(rows)
+                for row in reversed(scoped_rows)
                 if row["role"] in {"user", "assistant"}
             ]
         except (sqlite3.Error, json.JSONDecodeError, TypeError) as exc:

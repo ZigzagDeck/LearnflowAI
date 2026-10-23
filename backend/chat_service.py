@@ -41,6 +41,7 @@ class ConversationHistory(Protocol):
         *,
         limit: int = 8,
         source_ids: list[str] | None = None,
+        video_scopes: dict[str, float] | None = None,
     ) -> list[dict[str, str]]: ...
 
 REFUSAL = "I cannot answer that from the material available at your current lesson position."
@@ -67,6 +68,11 @@ class GroundedChatService:
             raise ChatUnavailableError("Source authorization unavailable.") from exc
 
         conversation: list[dict[str, str]] = []
+        playback_limits = {
+            scope.source_id: scope.playback_seconds for scope in request.video_scopes
+        }
+        if request.video_source_id is not None and request.playback_seconds is not None:
+            playback_limits[request.video_source_id] = request.playback_seconds
         if self.history is not None and user_id is not None:
             try:
                 conversation = self.history.get_recent_chat_turns(
@@ -74,6 +80,7 @@ class GroundedChatService:
                     user_id,
                     limit=8,
                     source_ids=request.allowed_source_ids,
+                    video_scopes=playback_limits,
                 )
             except Exception as exc:
                 raise ChatUnavailableError("Conversation history unavailable.") from exc
@@ -133,12 +140,6 @@ class GroundedChatService:
                 ):
                     continue
             else:
-                playback_limits = {
-                    scope.source_id: scope.playback_seconds
-                    for scope in request.video_scopes
-                }
-                if request.video_source_id is not None and request.playback_seconds is not None:
-                    playback_limits[request.video_source_id] = request.playback_seconds
                 cutoff = playback_limits.get(citation.source_id)
                 if (
                     citation.source_type != SourceType.VIDEO

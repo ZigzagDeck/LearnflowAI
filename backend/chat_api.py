@@ -35,6 +35,11 @@ async def chat(
             response.answer,
             payload.allowed_source_ids,
             [citation.model_dump(mode="json") for citation in response.citations],
+            video_scopes={
+                **{scope.source_id: scope.playback_seconds for scope in payload.video_scopes},
+                **({payload.video_source_id: payload.playback_seconds}
+                   if payload.video_source_id is not None else {}),
+            },
         )
         estimated_input = max(
             1,

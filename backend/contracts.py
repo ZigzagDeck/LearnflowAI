@@ -105,7 +105,7 @@ class ChatTurn(StrictModel):
 
 class VideoScope(StrictModel):
     source_id: str = Field(min_length=1, max_length=160)
-    playback_seconds: float = Field(ge=0)
+    playback_seconds: float = Field(ge=0, allow_inf_nan=False)
 
 
 class ChatRequest(StrictModel):
@@ -113,7 +113,7 @@ class ChatRequest(StrictModel):
     question: str = Field(min_length=1, max_length=4_000)
     allowed_source_ids: list[str] = Field(min_length=1, max_length=30)
     video_source_id: str | None = None
-    playback_seconds: float | None = Field(default=None, ge=0)
+    playback_seconds: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     video_scopes: list[VideoScope] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
@@ -127,6 +127,8 @@ class ChatRequest(StrictModel):
             raise ValueError("video_scopes cannot contain duplicate videos")
         if self.video_source_id and self.video_source_id in scoped_ids:
             raise ValueError("A video cannot use both legacy and multi-video scopes")
+        if len(scoped_ids) + (self.video_source_id is not None) > 10:
+            raise ValueError("A chat can use at most 10 video scopes")
         if any(source_id not in self.allowed_source_ids for source_id in scoped_ids):
             raise ValueError("Every video scope must be an allowed source")
         return self
