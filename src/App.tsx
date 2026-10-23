@@ -1,3 +1,4 @@
+import QuizPlayer from './QuizPlayer'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { apiErrorMessage, authErrorMessage } from './auth-errors'
@@ -1615,12 +1616,6 @@ function App() {
     }
   }
 
-  const quizAnsweredCount = quiz?.questions.filter((question) => {
-    const answer = quizAnswers[question.question_id]
-    return question.question_type === 'short_answer' ? Boolean(answer?.text.trim()) : Boolean(answer?.indices.length)
-  }).length || 0
-  const quizComplete = Boolean(quiz && quizAnsweredCount === quiz.questions.length)
-
   if (!authReady) {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
@@ -2011,8 +2006,8 @@ function App() {
             <div className="section-title"><SectionGlyph kind="quiz" /><div><p className="eyebrow">GROUNDED PRACTICE</p><h2>Test what you learned</h2></div></div>
             <button className="secondary-button" type="button" onClick={startNewQuiz} disabled={quizBusy}>New quiz</button>
           </div>
-          <div className="quiz-layout">
-            <aside className="source-picker">
+          <div className={`quiz-layout${quiz ? ' quiz-layout-focused' : ''}`}>
+            <aside className="source-picker" hidden={Boolean(quiz)}>
               <SelectionToolbar title="Quiz materials" availableIds={quizBulkIds} selectedIds={quizSourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => setQuizSourceIds(select ? quizBulkIds : [])} disabled={quizBusy} />
               {readyMaterials.length ? (
                 readyMaterials.map((material) => (
@@ -2043,89 +2038,22 @@ function App() {
                 <button type="button" onClick={() => void generateQuiz()} disabled={quizBusy || quizSourceIds.length === 0}>
                   {quizBusy && !quiz ? 'Generating…' : 'Generate quiz'}
                 </button>
-                <small>Select up to 12 processed materials. Answers stay hidden until submission.</small>
+                <small>Answers stay hidden until submission. Multiple-answer questions earn 1 point only when all correct options and no incorrect options are selected.</small>
               </div>
             </aside>
             <div className="quiz-panel" aria-live="polite">
               {quizError && <p className="history-alert" role="alert">{quizError}</p>}
               {quiz ? (
-                <>
-                  {quizResult && (
-                    <div className="quiz-score">
-                      <strong>{quizResult.score}/{quizResult.total}</strong>
-                      <span>{quizResult.score === quizResult.total ? 'Perfect score' : 'Quiz complete'}</span>
-                    </div>
-                  )}
-                  <div className="quiz-questions">
-                    {quiz.questions.map((question, questionIndex) => {
-                      const result = quizResult?.questions.find((item) => item.question_id === question.question_id)
-                      return (
-                        <article className="quiz-question" key={question.question_id}>
-                          <p className="quiz-number">QUESTION {questionIndex + 1}</p>
-                          <h3>{question.question}</h3>
-                          <p className="question-type">{question.question_type === 'single_answer' ? 'Choose one' : question.question_type === 'multiple_answer' ? `Choose all that apply${question.max_selections ? ` · up to ${question.max_selections}` : ''}` : 'Write a short answer'}</p>
-                          {question.question_type === 'short_answer' ? (
-                            <textarea
-                              className="short-answer"
-                              value={quizAnswers[question.question_id]?.text || ''}
-                              onChange={(event) => setQuizAnswers((current) => ({ ...current, [question.question_id]: { indices: [], text: event.target.value } }))}
-                              placeholder="Type your answer…"
-                              maxLength={2000}
-                              disabled={Boolean(quizResult)}
-                            />
-                          ) : (
-                            <div className="quiz-options">
-                              {question.options.map((option, optionIndex) => {
-                                const selected = quizAnswers[question.question_id]?.indices.includes(optionIndex) || false
-                                const optionState = result
-                                  ? result.correct_option_indices.includes(optionIndex) ? 'correct'
-                                    : result.selected_option_indices.includes(optionIndex) ? 'incorrect' : ''
-                                  : ''
-                                return (
-                                  <label className={`quiz-option ${optionState}`} key={`${question.question_id}-${optionIndex}`}>
-                                    <input
-                                      type={question.question_type === 'single_answer' ? 'radio' : 'checkbox'}
-                                      name={question.question_id}
-                                      checked={selected}
-                                      onChange={() => setQuizAnswers((current) => {
-                                        const previous = current[question.question_id]?.indices || []
-                                        const indices = question.question_type === 'single_answer'
-                                          ? [optionIndex]
-                                          : previous.includes(optionIndex) ? previous.filter((index) => index !== optionIndex)
-                                            : previous.length >= question.max_selections ? previous : [...previous, optionIndex]
-                                        return { ...current, [question.question_id]: { indices, text: '' } }
-                                      })}
-                                      disabled={Boolean(quizResult)}
-                                    />
-                                    <span>{option}</span>
-                                  </label>
-                                )
-                              })}
-                            </div>
-                          )}
-                          {result && (
-                            <div className={`quiz-explanation ${result.correct ? 'correct' : 'incorrect'}`}>
-                              <strong>{result.correct ? 'Correct' : 'Not quite'}</strong>
-                              <MarkdownAnswer>{result.explanation}</MarkdownAnswer>
-                              {!result.correct && result.question_type === 'short_answer' && result.accepted_answers.length > 0 && <p className="accepted-answer">Accepted answer: {result.accepted_answers[0]}</p>}
-                              {renderCitations(result.citations)}
-                            </div>
-                          )}
-                        </article>
-                      )
-                    })}
-                  </div>
-                  {!quizResult && (
-                    <button
-                      className="quiz-submit"
-                      type="button"
-                      onClick={() => void submitQuiz()}
-                      disabled={quizBusy || !quizComplete}
-                    >
-                      {quizBusy ? 'Scoring…' : `Submit ${quizAnsweredCount}/${quiz.questions.length} answered`}
-                    </button>
-                  )}
-                </>
+                <QuizPlayer key={quiz.quiz_id} questions={quiz.questions} answers={quizAnswers} result={quizResult} busy={quizBusy}
+                  onAnswer={(questionId, answer) => setQuizAnswers((current) => ({ ...current, [questionId]: answer }))}
+                  onSubmit={() => void submitQuiz()}
+                  renderExplanation={(questionId) => {
+                    const result = quizResult?.questions.find((item) => item.question_id === questionId)
+                    if (!result) return null
+                    return <><MarkdownAnswer>{result.explanation}</MarkdownAnswer>
+                      {!result.correct && result.question_type === 'short_answer' && result.accepted_answers.length > 0 && <p className="accepted-answer">Accepted answer: {result.accepted_answers[0]}</p>}
+                      {renderCitations(result.citations)}</>
+                  }} />
               ) : (
                 <div className="chat-empty"><SectionGlyph kind="quiz" /><h3>Build a grounded quiz</h3><p>Select ready materials and choose how many questions you want.</p></div>
               )}

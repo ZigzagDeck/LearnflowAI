@@ -222,7 +222,7 @@ class GroundedQuizService:
                     question=item.question.strip(),
                     question_type=item.question_type,
                     options=options,
-                    max_selections=len(item.correct_option_indices),
+                    max_selections=len(options) if item.question_type == "multiple_answer" else (1 if item.question_type == "single_answer" else 0),
                 )
             )
             stored_questions.append(
