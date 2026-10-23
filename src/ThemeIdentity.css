@@ -1,0 +1,169 @@
+/* Identity details are shared by the landing page, authentication, and workspace.
+   Color/surface/typography tokens come from App.css; these add twenty visual traits. */
+:root {
+  --identity-rule: solid;
+  --identity-tracking: .16em;
+  --identity-marker: 50%;
+  --identity-heading-weight: 600;
+  --identity-emphasis: italic;
+  --identity-button-radius: 6px 6px 6px 2px;
+  --identity-button-shadow: 0 5px 14px color-mix(in srgb, var(--olive) 12%, transparent);
+  --identity-scene: radial-gradient(ellipse at 65% 45%, var(--olive-soft), transparent 72%);
+  --identity-scene-radius: 45% 55% 35% 55%;
+  --identity-orbit: 50%;
+  --identity-note-radius: 3px 3px 13px 3px;
+  --identity-note-angle: -6deg;
+  --identity-preview-angle: 1deg;
+  --identity-preview-shadow: 0 25px 60px color-mix(in srgb, var(--olive) 13%, transparent), 0 2px 5px #00000005;
+  --identity-secondary: #b78a52;
+  --identity-badge-radius: 4px;
+  --identity-message-radius: 10px 10px 2px 10px;
+  --identity-icon-radius: 10px 10px 10px 3px;
+  --identity-icon-border: 1px solid color-mix(in srgb, var(--olive) 15%, transparent);
+  --identity-number-font: 'Playfair Display', Georgia, serif;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 27%, var(--page));
+  --identity-feature-shadow: 0 4px 15px color-mix(in srgb, var(--olive) 3%, transparent);
+  --identity-final-radius: 3px 3px 65px 3px;
+}
+:root[data-palette='terminal'] {
+  --identity-rule: dashed; --identity-tracking: .04em; --identity-marker: 0;
+  --identity-heading-weight: 500; --identity-emphasis: normal;
+  --identity-button-radius: 2px; --identity-button-shadow: 3px 3px 0 var(--line);
+  --identity-scene: linear-gradient(color-mix(in srgb, var(--olive) 8%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--olive) 8%, transparent) 1px, transparent 1px);
+  --identity-scene-radius: 0; --identity-orbit: 3px; --identity-note-radius: 0;
+  --identity-note-angle: 0deg; --identity-preview-angle: 0deg;
+  --identity-preview-shadow: 7px 7px 0 color-mix(in srgb, var(--olive) 12%, transparent);
+  --identity-secondary: #6995ba; --identity-badge-radius: 2px; --identity-message-radius: 2px;
+  --identity-icon-radius: 0; --identity-icon-border: 1px dashed var(--olive);
+  --identity-number-font: 'DM Mono', monospace;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 13%, var(--page));
+  --identity-feature-shadow: inset 0 3px 0 var(--olive-soft); --identity-final-radius: 2px;
+}
+:root[data-palette='daylight'] {
+  --identity-rule: solid; --identity-tracking: .22em; --identity-marker: 50%;
+  --identity-heading-weight: 500; --identity-emphasis: normal;
+  --identity-button-radius: 50px; --identity-button-shadow: none;
+  --identity-scene: linear-gradient(120deg, transparent 16%, var(--olive-soft) 16% 42%, transparent 42% 66%, color-mix(in srgb, var(--olive-soft) 50%, transparent) 66% 75%, transparent 75%);
+  --identity-scene-radius: 16px; --identity-orbit: 50% 50% 0 0; --identity-note-radius: 8px;
+  --identity-note-angle: -3deg; --identity-preview-angle: 0deg;
+  --identity-preview-shadow: 0 30px 65px color-mix(in srgb, var(--ink) 10%, transparent);
+  --identity-secondary: #a99b78; --identity-badge-radius: 50px; --identity-message-radius: 14px;
+  --identity-icon-radius: 50%; --identity-icon-border: 0;
+  --identity-number-font: 'Space Grotesk', sans-serif;
+  --identity-section-surface: color-mix(in srgb, var(--paper) 50%, var(--page));
+  --identity-feature-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 3%, transparent); --identity-final-radius: 20px;
+}
+:root[data-palette='botanical'] {
+  --identity-rule: dotted; --identity-tracking: .12em; --identity-marker: 60% 10% 60% 10%;
+  --identity-heading-weight: 600; --identity-emphasis: italic;
+  --identity-button-radius: 30px 30px 8px 30px; --identity-button-shadow: 0 5px 0 color-mix(in srgb, var(--olive) 15%, transparent);
+  --identity-scene: radial-gradient(ellipse at 10% 15%, color-mix(in srgb, var(--identity-secondary) 24%, transparent), transparent 60%), radial-gradient(ellipse at 80% 70%, var(--olive-soft), transparent 70%);
+  --identity-scene-radius: 43% 57% 58% 42%; --identity-orbit: 38% 62% 55% 45%; --identity-note-radius: 16px 16px 16px 3px;
+  --identity-note-angle: -7deg; --identity-preview-angle: 1.5deg;
+  --identity-preview-shadow: 0 25px 65px color-mix(in srgb, var(--identity-secondary) 22%, transparent);
+  --identity-secondary: #c18698; --identity-badge-radius: 20px; --identity-message-radius: 18px 18px 5px 18px;
+  --identity-icon-radius: 50% 50% 50% 15%; --identity-icon-border: 0;
+  --identity-number-font: 'Playfair Display', Georgia, serif;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 24%, var(--page));
+  --identity-feature-shadow: 0 8px 20px color-mix(in srgb, var(--identity-secondary) 7%, transparent); --identity-final-radius: 55px 55px 12px 55px;
+}
+:root[data-palette='blueprint'] {
+  --identity-rule: dashed; --identity-tracking: .075em; --identity-marker: 1px;
+  --identity-heading-weight: 500; --identity-emphasis: normal;
+  --identity-button-radius: 0; --identity-button-shadow: 4px 4px 0 var(--line);
+  --identity-scene: linear-gradient(color-mix(in srgb, var(--olive) 13%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--olive) 13%, transparent) 1px, transparent 1px);
+  --identity-scene-radius: 0; --identity-orbit: 0; --identity-note-radius: 0;
+  --identity-note-angle: -3deg; --identity-preview-angle: 0deg;
+  --identity-preview-shadow: 8px 8px 0 color-mix(in srgb, var(--olive) 17%, transparent);
+  --identity-secondary: #b57a47; --identity-badge-radius: 0; --identity-message-radius: 0;
+  --identity-icon-radius: 0; --identity-icon-border: 1px solid var(--olive);
+  --identity-number-font: 'DM Mono', monospace;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 30%, var(--page));
+  --identity-feature-shadow: 4px 4px 0 color-mix(in srgb, var(--olive) 10%, transparent); --identity-final-radius: 0;
+}
+:root[data-palette='legal'] {
+  --identity-rule: solid; --identity-tracking: .13em; --identity-marker: 0;
+  --identity-heading-weight: 400; --identity-emphasis: italic;
+  --identity-button-radius: 1px; --identity-button-shadow: inset 0 0 0 3px color-mix(in srgb, var(--on-accent) 15%, transparent);
+  --identity-scene: repeating-linear-gradient(0deg, color-mix(in srgb, var(--olive) 3%, transparent) 0 1px, transparent 1px 5px), radial-gradient(ellipse, var(--olive-soft), transparent 70%);
+  --identity-scene-radius: 4px; --identity-orbit: 0; --identity-note-radius: 1px;
+  --identity-note-angle: -4deg; --identity-preview-angle: .5deg;
+  --identity-preview-shadow: 0 18px 30px color-mix(in srgb, var(--ink) 12%, transparent);
+  --identity-secondary: #a18b5f; --identity-badge-radius: 1px; --identity-message-radius: 1px;
+  --identity-icon-radius: 2px; --identity-icon-border: 3px double var(--line);
+  --identity-number-font: 'Libre Baskerville', Georgia, serif;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 20%, var(--page));
+  --identity-feature-shadow: inset 3px 0 0 var(--olive); --identity-final-radius: 2px;
+}
+:root[data-palette='academy'] {
+  --identity-rule: solid; --identity-tracking: .17em; --identity-marker: 2px 50% 50% 50%;
+  --identity-heading-weight: 600; --identity-emphasis: italic;
+  --identity-button-radius: 7px; --identity-button-shadow: 0 3px 0 color-mix(in srgb, var(--olive-dark) 50%, transparent);
+  --identity-scene: repeating-linear-gradient(0deg, transparent 0 24px, color-mix(in srgb, var(--olive) 9%, transparent) 24px 25px);
+  --identity-scene-radius: 10px 10px 0 0; --identity-orbit: 50% 50% 3px 3px; --identity-note-radius: 1px 10px 10px 1px;
+  --identity-note-angle: -5deg; --identity-preview-angle: 1deg;
+  --identity-preview-shadow: 0 20px 40px color-mix(in srgb, var(--olive) 16%, transparent), 3px 4px 0 var(--paper-raised);
+  --identity-secondary: #b7994c; --identity-badge-radius: 4px; --identity-message-radius: 8px 8px 1px 8px;
+  --identity-icon-radius: 50% 50% 5px 5px; --identity-icon-border: 1px solid var(--line);
+  --identity-number-font: 'Playfair Display', Georgia, serif;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 22%, var(--page));
+  --identity-feature-shadow: 0 3px 0 var(--line); --identity-final-radius: 70px 70px 8px 8px;
+}
+:root[data-palette='atelier'] {
+  --identity-rule: dotted; --identity-tracking: .11em; --identity-marker: 40% 60% 55% 45%;
+  --identity-heading-weight: 400; --identity-emphasis: normal;
+  --identity-button-radius: 16px 6px 18px 7px; --identity-button-shadow: 3px 4px 0 color-mix(in srgb, var(--identity-secondary) 25%, transparent);
+  --identity-scene: radial-gradient(ellipse at 15% 20%, color-mix(in srgb, var(--olive) 18%, transparent), transparent 60%), radial-gradient(ellipse at 80% 80%, color-mix(in srgb, var(--identity-secondary) 22%, transparent), transparent 70%);
+  --identity-scene-radius: 40% 60% 44% 56%; --identity-orbit: 40% 60% 54% 46%; --identity-note-radius: 15px 3px 18px 5px;
+  --identity-note-angle: -8deg; --identity-preview-angle: -1deg;
+  --identity-preview-shadow: 0 25px 65px color-mix(in srgb, var(--olive) 16%, transparent);
+  --identity-secondary: #c48a53; --identity-badge-radius: 8px 2px 9px 3px; --identity-message-radius: 14px 5px 16px 5px;
+  --identity-icon-radius: 13px 4px 14px 5px; --identity-icon-border: 1px dotted var(--olive);
+  --identity-number-font: 'Kalam', cursive;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 18%, var(--page));
+  --identity-feature-shadow: 3px 5px 0 color-mix(in srgb, var(--identity-secondary) 10%, transparent); --identity-final-radius: 45px 10px 55px 15px;
+}
+:root[data-palette='neon'] {
+  --identity-rule: solid; --identity-tracking: .09em; --identity-marker: 3px;
+  --identity-heading-weight: 600; --identity-emphasis: normal;
+  --identity-button-radius: 10px 10px 2px 10px; --identity-button-shadow: 0 0 25px color-mix(in srgb, var(--olive) 25%, transparent);
+  --identity-scene: radial-gradient(ellipse at 70% 20%, color-mix(in srgb, var(--olive) 25%, transparent), transparent 60%), radial-gradient(ellipse at 10% 85%, color-mix(in srgb, var(--identity-secondary) 20%, transparent), transparent 60%);
+  --identity-scene-radius: 25%; --identity-orbit: 30px; --identity-note-radius: 10px 10px 2px 10px;
+  --identity-note-angle: -5deg; --identity-preview-angle: 1.5deg;
+  --identity-preview-shadow: 0 0 0 1px color-mix(in srgb, var(--olive) 18%, transparent), 0 25px 70px color-mix(in srgb, var(--olive) 23%, transparent);
+  --identity-secondary: #329bad; --identity-badge-radius: 6px; --identity-message-radius: 12px 12px 2px 12px;
+  --identity-icon-radius: 9px 9px 2px 9px; --identity-icon-border: 1px solid color-mix(in srgb, var(--olive) 40%, transparent);
+  --identity-number-font: 'Space Grotesk', sans-serif;
+  --identity-section-surface: color-mix(in srgb, var(--olive-soft) 26%, var(--page));
+  --identity-feature-shadow: 0 0 20px color-mix(in srgb, var(--olive) 8%, transparent); --identity-final-radius: 25px 25px 4px 25px;
+}
+:root[data-theme='dark'] { --identity-secondary: #d4ac7a; }
+:root[data-theme='dark'][data-palette='terminal'] { --identity-secondary: #89b9e4; }
+:root[data-theme='dark'][data-palette='daylight'] { --identity-secondary: #d1c39f; }
+:root[data-theme='dark'][data-palette='botanical'] { --identity-secondary: #dfa5bb; }
+:root[data-theme='dark'][data-palette='blueprint'] { --identity-secondary: #e1b27b; }
+:root[data-theme='dark'][data-palette='legal'] { --identity-secondary: #ccb984; }
+:root[data-theme='dark'][data-palette='academy'] { --identity-secondary: #e1c77e; }
+:root[data-theme='dark'][data-palette='atelier'] { --identity-secondary: #edb887; }
+:root[data-theme='dark'][data-palette='neon'] { --identity-secondary: #6bdaea; }
+
+/* Carry the same visual language through the existing application. */
+:root .brand-mark { border-radius: var(--identity-icon-radius); }
+:root :is(.eyebrow, .card-kicker) { letter-spacing: var(--identity-tracking); }
+:root :is(.section-glyph, .drop-icon, .guide-num) { border-radius: var(--identity-icon-radius); border: var(--identity-icon-border); }
+:root :is(.step-number, .profile-avatar, .palette-swatch) { border-radius: var(--identity-marker); }
+:root :is(.citation-chip, .pill-badge, .file-type-badge, .history-status) { border-radius: var(--identity-badge-radius); }
+:root :is(.chat-message, .interview-msg-bubble) { border-radius: var(--identity-message-radius); }
+:root :is(.auth-mode-tabs, .source-picker-header, .history-card) { border-bottom-style: var(--identity-rule); }
+:root :is(.submit-upload, .extract-button, .quiz-submit, .start-interview-btn, .auth-card form .auth-submit) { border-radius: var(--identity-button-radius); box-shadow: var(--identity-button-shadow); }
+:root .auth-shell .auth-card { border-radius: var(--theme-card-radius); border: var(--theme-panel-border); box-shadow: var(--identity-preview-shadow); }
+:root .empty-state h3 { color: var(--ink); }
+:root .empty-state p { color: var(--muted); }
+.auth-home-link { position: absolute; top: 27px; left: 30px; display: inline-flex; gap: 9px; align-items: center; font-size: 12px; color: var(--accent-text); }
+.auth-home-link:hover { text-decoration: underline; text-underline-offset: 4px; }
+:root .auth-card form .password-toggle-btn:focus-visible { outline: 2px solid var(--accent-text) !important; outline-offset: 2px; }
+@media (max-width: 650px) {
+  .auth-home-link { position: static; align-self: flex-start; margin: 0 0 24px; }
+  .auth-shell { padding-top: 90px; }
+  :root .topbar .signout-button { display: inline-flex; align-items: center; min-height: 34px; padding: 7px 9px; font-size: 10px; }
+}

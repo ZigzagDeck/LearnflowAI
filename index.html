@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LearnFlow AI</title>
+    <meta name="description" content="Turn your sources into understanding. Bring PDFs, slides, images, and captioned videos together for source-grounded conversations, summaries, quizzes, and interview practice." />
+    <meta name="theme-color" content="#747d43" />
+    <title>LearnFlow AI — Find your flow</title>
+    <script>
+      // Apply saved appearance before the first paint, including on the sign-in page.
+      try {
+        const root = document.documentElement;
+        const theme = localStorage.getItem('learnflow.theme');
+        const palette = localStorage.getItem('learnflow.palette');
+        root.dataset.theme = theme === 'light' || theme === 'dark' ? theme : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        root.dataset.palette = ['olive', 'terminal', 'daylight', 'botanical', 'blueprint', 'legal', 'academy', 'atelier', 'neon'].includes(palette) ? palette : 'olive';
+        root.style.colorScheme = root.dataset.theme;
+      } catch { /* System defaults remain available when browser storage is restricted. */ }
+    </script>
   </head>
   <body>
     <div id="root"></div>

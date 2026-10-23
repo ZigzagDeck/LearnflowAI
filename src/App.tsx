@@ -3,6 +3,13 @@ import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { apiErrorMessage, authErrorMessage } from './auth-errors'
 import { youtubeEmbedUrl } from './youtube'
 import './App.css'
+import './ThemeIdentity.css'
+import LandingPage from './LandingPage'
+import { BookLogo, PalettePicker, ThemeToggle } from './ThemeControls'
+import { PALETTES } from './themes'
+import type { Palette, Theme } from './themes'
+import { publicPageForHash } from './navigation'
+import type { PublicPage } from './navigation'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const MAX_FILE_SIZE = 100 * 1024 * 1024
@@ -12,21 +19,7 @@ const AUTH_STORAGE_KEY = 'learnflow.auth.token'
 const THEME_STORAGE_KEY = 'learnflow.theme'
 const PALETTE_STORAGE_KEY = 'learnflow.palette'
 
-type Theme = 'light' | 'dark'
-type Palette = 'olive' | 'terminal' | 'daylight' | 'botanical' | 'blueprint' | 'legal' | 'academy' | 'atelier' | 'neon'
 type WorkspaceView = 'materials' | 'chat' | 'summary' | 'quiz' | 'interview' | 'history'
-
-const PALETTES: Array<{ id: Palette; name: string; note: string; swatch: string }> = [
-  { id: 'olive', name: 'Olive Library', note: 'Calm and focused', swatch: '#747d43' },
-  { id: 'terminal', name: 'Midnight Terminal', note: 'Precise and technical', swatch: '#63d9aa' },
-  { id: 'daylight', name: 'Daylight Desk', note: 'Clean and minimal', swatch: '#6f7c72' },
-  { id: 'botanical', name: 'Botanical Notes', note: 'Soft and playful', swatch: '#7fa467' },
-  { id: 'blueprint', name: 'Blueprint Studio', note: 'Structured and analytical', swatch: '#477b9b' },
-  { id: 'legal', name: 'Legal Archive', note: 'Formal and editorial', swatch: '#8d6540' },
-  { id: 'academy', name: 'Classic Academy', note: 'Warm and scholarly', swatch: '#a65345' },
-  { id: 'atelier', name: 'Creative Atelier', note: 'Airy and expressive', swatch: '#668a83' },
-  { id: 'neon', name: 'Neon Quest', note: 'Energetic and immersive', swatch: '#a77cff' },
-]
 
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string }> = [
   { id: 'materials', label: 'Materials' },
@@ -167,18 +160,6 @@ type QuizQuestionResult = {
 type QuizAnswerState = { indices: number[]; text: string }
 type VideoScopeState = Record<string, { duration: number; playback: number }>
 
-function BookLogo({ small = false }: { small?: boolean }) {
-  return (
-    <span className={`brand-mark${small ? ' small' : ''}`} aria-hidden="true">
-      <svg viewBox="0 0 32 32" role="img">
-        <path d="M5 7.5c4.3-.9 8 .1 11 2.5v15c-3-2.4-6.7-3.3-11-2.5z" />
-        <path d="M27 7.5c-4.3-.9-8 .1-11 2.5v15c3-2.4 6.7-3.3 11-2.5z" />
-        <path d="M16 10v15" />
-      </svg>
-    </span>
-  )
-}
-
 function SectionGlyph({ kind }: { kind: WorkspaceView }) {
   const paths: Record<WorkspaceView, ReactNode> = {
     materials: <><path d="M4 7.5 12 4l8 3.5v10L12 21l-8-3.5z" /><path d="M12 4v17M4 7.5l8 3.5 8-3.5" /></>,
@@ -189,43 +170,6 @@ function SectionGlyph({ kind }: { kind: WorkspaceView }) {
     history: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3.5 2M3.5 5.5 2 7" /></>,
   }
   return <span className={`section-glyph ${kind}`} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[kind]}</svg></span>
-}
-
-function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
-  const nextTheme = theme === 'light' ? 'dark' : 'light'
-  return (
-    <button
-      className="theme-toggle"
-      type="button"
-      onClick={onToggle}
-      aria-label={`Switch to ${nextTheme} mode`}
-      title={`Switch to ${nextTheme} mode`}
-    >
-      {theme === 'light' ? (
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.7 8.7 0 1 0 20.2 15.4Z" />
-        </svg>
-      ) : (
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-        </svg>
-      )}
-    </button>
-  )
-}
-
-function PalettePicker({ palette, onChange }: { palette: Palette; onChange: (palette: Palette) => void }) {
-  const selected = PALETTES.find((item) => item.id === palette) || PALETTES[0]
-  return (
-    <label className="palette-picker" title={selected.note}>
-      <span className="palette-swatch" style={{ background: selected.swatch }} aria-hidden="true" />
-      <span className="sr-only">Visual theme</span>
-      <select value={palette} onChange={(event) => onChange(event.target.value as Palette)} aria-label="Visual theme">
-        {PALETTES.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
-      </select>
-    </label>
-  )
 }
 
 function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit, onToggle, disabled = false }: {
@@ -326,18 +270,21 @@ function formatDate(value: string) {
 
 function AuthScreen({
   onAuthenticated,
+  initialMode,
   theme,
   onToggleTheme,
   palette,
   onPaletteChange,
 }: {
   onAuthenticated: (token: string, user: UserProfile) => void
+  initialMode: 'login' | 'register'
   theme: Theme
   onToggleTheme: () => void
   palette: Palette
   onPaletteChange: (palette: Palette) => void
 }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const mode = initialMode
+  const setMode = (next: 'login' | 'register') => { window.location.hash = next }
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
@@ -372,6 +319,7 @@ function AuthScreen({
 
   return (
     <main className="auth-shell">
+      <a className="auth-home-link" href="#home"><span aria-hidden="true">←</span> Back to LearnFlow</a>
       <div className="auth-theme-toggle">
         <PalettePicker palette={palette} onChange={onPaletteChange} />
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
@@ -390,10 +338,11 @@ function AuthScreen({
             : 'Join to upload study materials, ask questions, practice with quizzes, and prepare for interviews.'}
         </p>
 
-        <div className="auth-mode-tabs" role="tablist">
+        <div className="auth-mode-tabs" aria-label="Account options">
           <button
             type="button"
             className={`auth-mode-tab ${mode === 'login' ? 'active' : ''}`}
+            aria-pressed={mode === 'login'}
             onClick={() => { setMode('login'); setError('') }}
           >
             Sign In
@@ -401,6 +350,7 @@ function AuthScreen({
           <button
             type="button"
             className={`auth-mode-tab ${mode === 'register' ? 'active' : ''}`}
+            aria-pressed={mode === 'register'}
             onClick={() => { setMode('register'); setError('') }}
           >
             Create Account
@@ -446,7 +396,6 @@ function AuthScreen({
                 type="button"
                 className="password-toggle-btn"
                 onClick={() => setShowPassword(!showPassword)}
-                tabIndex={-1}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 title={showPassword ? 'Hide password' : 'Show password'}
               >
@@ -484,6 +433,7 @@ function AuthScreen({
 function App() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme)
   const [palette, setPalette] = useState<Palette>(getInitialPalette)
+  const [publicPage, setPublicPage] = useState<PublicPage>(() => publicPageForHash(window.location.hash))
   const [activeView, setActiveView] = useState<WorkspaceView>(getInitialView)
   const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
@@ -584,7 +534,11 @@ function App() {
   }, [palette, theme])
 
   useEffect(() => {
-    const restoreView = () => setActiveView(getInitialView())
+    const restoreView = () => {
+      if (WORKSPACE_VIEWS.some((view) => `#${view.id}` === window.location.hash)) setActiveView(getInitialView())
+      setPublicPage(publicPageForHash(window.location.hash))
+      if (['#home', '#login', '#register'].includes(window.location.hash)) window.scrollTo({ top: 0, behavior: 'instant' })
+    }
     window.addEventListener('popstate', restoreView)
     window.addEventListener('hashchange', restoreView)
     return () => {
@@ -685,6 +639,7 @@ function App() {
     setAuthToken(token)
     setCurrentUser(user)
     setAuthReady(true)
+    navigateTo(activeView)
   }
 
   const logout = async () => {
@@ -694,6 +649,9 @@ function App() {
     setAuthToken('')
     setCurrentUser(null)
     setAdminOpen(false)
+    setPublicPage('landing')
+    window.history.pushState(null, '', '#home')
+    window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
   const exportAccountData = async () => {
@@ -1667,8 +1625,14 @@ function App() {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
 
+  if (!currentUser && publicPage === 'landing') return (
+    <LandingPage palette={palette} theme={theme} onPaletteChange={setPalette} onToggleTheme={toggleTheme} />
+  )
+
   if (!currentUser) return (
     <AuthScreen
+      key={publicPage}
+      initialMode={publicPage === 'register' ? 'register' : 'login'}
       onAuthenticated={authenticated}
       theme={theme}
       onToggleTheme={toggleTheme}

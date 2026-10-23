@@ -16,6 +16,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 dist-ssr
+.wrangler/
 backend/uploads/
 backend/data/
 
