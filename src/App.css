@@ -5403,6 +5403,28 @@ body {
   font-family: 'Playfair Display', Georgia, serif;
 }
 
+/* Focused quiz flow: layout only; existing theme typography and colours apply. */
+.quiz-layout.quiz-layout-focused { grid-template-columns: minmax(0, 1fr); }
+.quiz-layout-focused > .source-picker[hidden] { display: none; }
+.quiz-step-player, .quiz-step-result { max-width: 900px; margin-inline: auto; }
+.quiz-step-top, .quiz-step-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.quiz-step-top { margin-bottom: 12px; }
+.quiz-step-top .quiz-number { margin: 0; }
+.quiz-step-navigator { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.quiz-step-number { min-width: 44px; min-height: 44px; }
+.quiz-step-number[aria-current='step'] { outline: 2px solid currentColor; outline-offset: 2px; }
+.quiz-step-actions { margin-top: 18px; }
+.quiz-step-actions > .quiz-submit { width: auto; margin-top: 0; }
+.quiz-step-result > .quiz-submit { width: auto; }
+.quiz-option-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.quiz-answer-label { display: block; }
+.quiz-submit-check .quiz-step-actions { justify-content: flex-start; }
+.quiz-step-player h3:focus, .quiz-step-result h3:focus { outline-offset: 5px; }
+@media (max-width: 540px) {
+  .quiz-step-actions > button { flex: 1; min-height: 44px; }
+  .quiz-step-number { padding-inline: 10px; }
+}
+
 .verification-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem; padding: 1rem; border: 1px solid var(--border-color, #aaa); border-radius: 12px; }
 .verification-notice p { flex-basis: 100%; margin: 0; }
 a.auth-switch { display: block; text-align: center; margin-top: 1rem; }
