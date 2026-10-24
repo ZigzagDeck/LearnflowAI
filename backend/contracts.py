@@ -181,3 +181,31 @@ class QuizSubmissionResponse(StrictModel):
     score: int = Field(ge=0)
     total: int = Field(ge=1)
     questions: list[QuizQuestionResult]
+
+
+class RevisionRequest(StrictModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    question_ids: list[str] = Field(min_length=1, max_length=3)
+
+
+class RevisionPassage(StrictModel):
+    text: str
+    citation: Citation
+
+
+class RevisionTarget(StrictModel):
+    question_id: str
+    question: str
+    explanation: str
+    passages: list[RevisionPassage]
+
+
+class RevisionPlan(StrictModel):
+    quiz_id: str
+    missed_count: int
+    targets: list[RevisionTarget]
+
+
+class RevisionQuizResponse(QuizResponse):
+    parent_quiz_id: str
+    revised_question_ids: list[str]
