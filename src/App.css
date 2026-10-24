@@ -5402,3 +5402,7 @@ body {
 :root[data-theme='dark'][data-palette='olive'] .auth-card h1 {
   font-family: 'Playfair Display', Georgia, serif;
 }
+
+.verification-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem; padding: 1rem; border: 1px solid var(--border-color, #aaa); border-radius: 12px; }
+.verification-notice p { flex-basis: 100%; margin: 0; }
+a.auth-switch { display: block; text-align: center; margin-top: 1rem; }

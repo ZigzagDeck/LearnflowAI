@@ -21,6 +21,7 @@ from .auth import (
     validate_password,
 )
 from .auth_api import router as auth_router
+from .account_recovery import router as account_recovery_router
 from .quiz_api import router as quiz_router
 from .quiz_integration import build_local_bedrock_quiz_service
 from .summary_api import router as summary_router
@@ -101,6 +102,7 @@ app = FastAPI(title="LearnFlow AI API", lifespan=lifespan)
 app.middleware("http")(request_logging_middleware)
 app.middleware("http")(rate_limit_middleware)
 app.include_router(auth_router)
+app.include_router(account_recovery_router)
 app.include_router(chat_router)
 app.include_router(quiz_router)
 app.include_router(summary_router)
