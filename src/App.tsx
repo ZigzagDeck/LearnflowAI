@@ -1,3 +1,5 @@
+import RevisionCoach from "./RevisionCoach"
+import type { RevisionPlan } from "./RevisionCoach"
 import QuizPlayer from './QuizPlayer'
 import { materialErrorMessage, materialStatusLabel } from './material-feedback'
 import AccountActionScreen, { type AccountAction } from './AccountActionScreen'
@@ -147,6 +149,8 @@ type QuizAttempt = {
   quiz_id: string
   session_id: string
   questions: QuizQuestion[]
+  parent_quiz_id?: string
+  revised_question_ids?: string[]
 }
 
 type QuizQuestionResult = {
@@ -488,6 +492,7 @@ function App() {
   const [quiz, setQuiz] = useState<QuizAttempt | null>(null)
   const [quizAnswers, setQuizAnswers] = useState<Record<string, QuizAnswerState>>({})
   const [quizResult, setQuizResult] = useState<QuizResult | null>(null)
+  const [revisionOrigin, setRevisionOrigin] = useState<{ quiz: QuizAttempt; answers: Record<string, QuizAnswerState>; result: QuizResult } | null>(null)
   const [summarySourceIds, setSummarySourceIds] = useState<string[]>([])
   const [summaryStyle, setSummaryStyle] = useState<'concise' | 'detailed' | 'study_guide'>('detailed')
   const [summaryResult, setSummaryResult] = useState<SummaryResult | null>(null)
@@ -600,6 +605,7 @@ function App() {
     setInterviewSourceIds([])
     sourceDefaultsInitialized.current = false
     setQuiz(null)
+    setRevisionOrigin(null)
     setQuizAnswers({})
     setQuizResult(null)
     setQuizError('')
@@ -1132,6 +1138,7 @@ function App() {
   const startNewQuiz = () => {
     setQuizSessionId(crypto.randomUUID().replaceAll('-', ''))
     setQuiz(null)
+    setRevisionOrigin(null)
     setQuizAnswers({})
     setQuizResult(null)
     setQuizError('')
@@ -1143,6 +1150,7 @@ function App() {
     setQuizBusy(true)
     setQuizError('')
     setQuiz(null)
+    setRevisionOrigin(null)
     setQuizResult(null)
     setQuizAnswers({})
     try {
@@ -1204,6 +1212,38 @@ function App() {
       if (version === workspaceVersionRef.current) {
         setQuizBusy(false)
       }
+    }
+  }
+
+  const loadRevisionPlan = async (): Promise<RevisionPlan> => {
+    if (!quiz) throw new Error('Open a quiz result first.')
+    const response = await apiFetch(`${API_BASE_URL}/quiz/${quiz.quiz_id}/revision`)
+    const payload = await response.json()
+    if (!response.ok) throw new Error(apiErrorMessage(payload, 'Revision is unavailable.'))
+    return payload
+  }
+
+  const generateRevision = async (ids: string[]) => {
+    if (!quiz || !quizResult || quizBusy) return
+    const version = workspaceVersionRef.current
+    setQuizBusy(true)
+    setQuizError('')
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/quiz/${quiz.quiz_id}/revision`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: crypto.randomUUID().replaceAll('-', ''), question_ids: ids }),
+      })
+      const payload = await response.json()
+      if (version !== workspaceVersionRef.current) return
+      if (!response.ok) throw new Error(apiErrorMessage(payload, 'Practice could not be generated. Your result is still here.'))
+      setRevisionOrigin(current => current || { quiz, answers: quizAnswers, result: quizResult })
+      setQuiz(payload)
+      setQuizAnswers({})
+      setQuizResult(null)
+    } catch (reason) {
+      if (version === workspaceVersionRef.current) setQuizError(reason instanceof Error ? reason.message : 'Practice could not be generated.')
+    } finally {
+      if (version === workspaceVersionRef.current) setQuizBusy(false)
     }
   }
 
@@ -2083,16 +2123,32 @@ function App() {
             <div className="quiz-panel" aria-live="polite">
               {quizError && <p className="history-alert" role="alert">{quizError}</p>}
               {quiz ? (
+                <><div className="revision-practice-header">
+                  {quiz.parent_quiz_id && <><p className="eyebrow">FOCUSED PRACTICE</p>
+                    <button className="secondary-button" type="button" disabled={quizBusy} onClick={() => {
+                      if (!revisionOrigin) return
+                      setQuiz(revisionOrigin.quiz); setQuizAnswers(revisionOrigin.answers); setQuizResult(revisionOrigin.result)
+                      setQuizError(''); setRevisionOrigin(null)
+                    }}>Back to original result</button></>}
+                </div>
                 <QuizPlayer key={quiz.quiz_id} questions={quiz.questions} answers={quizAnswers} result={quizResult} busy={quizBusy}
                   onAnswer={(questionId, answer) => setQuizAnswers((current) => ({ ...current, [questionId]: answer }))}
                   onSubmit={() => void submitQuiz()}
+                  resultFooter={quizResult && <>
+                    {quiz.parent_quiz_id && <p className="revision-progress" role="status">
+                      Earlier selected questions: 0/{quizResult.total}. Fresh check: {quizResult.score}/{quizResult.total}.
+                      <small>New questions on the same reading.</small>
+                    </p>}
+                    <RevisionCoach key={quiz.quiz_id} missedCount={quizResult.total - quizResult.score} busy={quizBusy}
+                      loadPlan={loadRevisionPlan} onPractice={(ids) => void generateRevision(ids)} renderSources={renderCitations} />
+                  </>}
                   renderExplanation={(questionId) => {
                     const result = quizResult?.questions.find((item) => item.question_id === questionId)
                     if (!result) return null
                     return <><MarkdownAnswer>{result.explanation}</MarkdownAnswer>
                       {!result.correct && result.question_type === 'short_answer' && result.accepted_answers.length > 0 && <p className="accepted-answer">Accepted answer: {result.accepted_answers[0]}</p>}
                       {renderCitations(result.citations)}</>
-                  }} />
+                  }} /></>
               ) : (
                 <div className="chat-empty"><SectionGlyph kind="quiz" /><h3>Build a grounded quiz</h3><p>Select ready materials and choose how many questions you want.</p></div>
               )}

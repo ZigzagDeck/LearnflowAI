@@ -5148,7 +5148,7 @@ body {
   }
 }
 
-/* ==========================================================================
+/* ===================================================================
    Login Page — High Contrast Font Colors & Theme Visibility in Dark Mode
    ========================================================================== */
 :root[data-theme='dark'] .auth-shell {
@@ -5428,3 +5428,18 @@ body {
 .verification-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem; padding: 1rem; border: 1px solid var(--border-color, #aaa); border-radius: 12px; }
 .verification-notice p { flex-basis: 100%; margin: 0; }
 a.auth-switch { display: block; text-align: center; margin-top: 1rem; }
+
+/* Revision expands on demand and inherits the active palette. */
+.revision-coach { margin-top: 24px; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink); text-align: left; }
+.revision-coach h3 { margin: 0; }
+.revision-targets { display: grid; gap: 16px; }
+.revision-target { min-width: 0; border-top: 1px solid currentColor; padding-top: 12px; }
+.revision-select { display: flex; align-items: flex-start; gap: 10px; }
+.revision-select input { flex: 0 0 auto; margin-top: 5px; }
+.revision-target details { margin-top: 8px; }
+.revision-target summary { cursor: pointer; padding-block: 8px; }
+.revision-reading blockquote { margin: 12px 0; padding-left: 12px; border-left: 2px solid currentColor; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
+.revision-coach small, .revision-progress small { display: block; margin-top: 10px; }
+.revision-progress { margin-top: 20px; }
+.revision-practice-header:empty { display: none; }
+.revision-practice-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }

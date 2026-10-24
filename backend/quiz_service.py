@@ -41,6 +41,10 @@ class QuizModelProvider(Protocol):
         self, evidence: list[str], count: int, quiz_type: str
     ) -> str: ...
 
+    async def generate_revision_quiz(
+        self, evidence: list[str], focus: str, excluded_questions: list[str]
+    ) -> str: ...
+
 
 class _GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")

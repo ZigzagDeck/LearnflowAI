@@ -71,3 +71,48 @@ def submit_quiz(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except QuizUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# Revision reads are local-only; generation is an explicit, bounded provider action.
+from .contracts import RevisionPlan, RevisionRequest, RevisionQuizResponse
+from .revision_service import RevisionService
+
+
+def _revision_service(request: Request) -> RevisionService:
+    service = getattr(request.app.state, "quiz_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Revision is not configured.")
+    return RevisionService(service)
+
+
+@router.get("/{quiz_id}/revision", response_model=RevisionPlan)
+async def revision_plan(quiz_id: str, request: Request,
+                        user: UserRecord = Depends(get_current_user)) -> RevisionPlan:
+    try:
+        return await _revision_service(request).plan(quiz_id, user.user_id)
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=403, detail="Revision sources are unavailable.") from exc
+    except QuizAttemptError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except QuizUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/{quiz_id}/revision", response_model=RevisionQuizResponse)
+async def revision_quiz(quiz_id: str, payload: RevisionRequest, request: Request,
+                        user: UserRecord = Depends(get_current_user)) -> RevisionQuizResponse:
+    try:
+        response = await _revision_service(request).generate(quiz_id, payload, user.user_id)
+        rendered = sum(len(q.question) + sum(map(len, q.options)) for q in response.questions)
+        request.app.state.resource_store.record_user_ai_usage(
+            user.user_id, input_tokens=max(1, len(payload.question_ids) * 3200),
+            output_tokens=max(1, rendered // 4), operation="quiz_revision")
+        return response
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=403, detail="Revision sources are unavailable.") from exc
+    except QuizAttemptError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except QuizUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ResourceStoreError as exc:
+        raise HTTPException(status_code=503, detail="Practice usage could not be recorded.") from exc

@@ -4,13 +4,14 @@ import type { QuizAnswers, QuizQuestion, QuizReview } from './quiz-flow'
 
 type Result = { score: number; total: number; questions: QuizReview[] }
 
-export default function QuizPlayer({ questions, answers, result, busy, onAnswer, onSubmit, renderExplanation }: {
+export default function QuizPlayer({ questions, answers, result, busy, onAnswer, onSubmit, renderExplanation, resultFooter }: {
   questions: QuizQuestion[]
   answers: QuizAnswers
   result: Result | null
   busy: boolean
   onAnswer: (questionId: string, answer: QuizAnswers[string]) => void
   onSubmit: () => void
+  resultFooter?: ReactNode
   renderExplanation: (questionId: string) => ReactNode
 }) {
   const [activeIndex, setActiveIndex] = useState(0)
@@ -40,6 +41,7 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
     <h3 ref={heading} tabIndex={-1}>Your result</h3>
     <p>{result.score} of {result.total} questions correct.</p>
     <button className="quiz-submit" type="button" onClick={() => { setActiveIndex(0); setConfirming(false); setReviewing(true) }}>Review answers</button>
+    {resultFooter}
   </section>
 
   return <section className="quiz-step-player" aria-busy={busy}>
@@ -61,7 +63,7 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
     </nav>
     {confirming && !result ? <section className="quiz-question quiz-submit-check">
       <h3 ref={heading} tabIndex={-1}>Review &amp; submit</h3>
-      <p role="status">{missing.length ? `${missing.length} ${missing.length === 1 ? 'question needs' : 'questions need'} an answer. Select a number above to finish.` : `All ${questions.length} questions answered.`}</p>
+      <p role="status">{missing.length ? `${missing.length} ${missing.length === 1 ? 'question needs' : 'questions need'} an answer. Select a number above to finish.` : `All ${questions.length} ${questions.length === 1 ? 'question' : 'questions'} answered.`}</p>
       <div className="quiz-step-actions">
         <button className="secondary-button" type="button" disabled={busy} onClick={() => goTo(missing[0] ?? activeIndex)}>{missing.length ? 'Go to unanswered' : 'Back to questions'}</button>
         <button className="quiz-submit" type="button" disabled={busy || missing.length > 0} onClick={onSubmit}>{busy ? 'Submitting…' : 'Submit quiz'}</button>
