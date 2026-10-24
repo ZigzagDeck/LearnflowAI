@@ -5424,3 +5424,7 @@ body {
   .quiz-step-actions > button { flex: 1; min-height: 44px; }
   .quiz-step-number { padding-inline: 10px; }
 }
+
+.verification-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1rem; padding: 1rem; border: 1px solid var(--border-color, #aaa); border-radius: 12px; }
+.verification-notice p { flex-basis: 100%; margin: 0; }
+a.auth-switch { display: block; text-align: center; margin-top: 1rem; }

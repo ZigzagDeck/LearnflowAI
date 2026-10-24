@@ -188,7 +188,7 @@ Open [localhost:5173](http://localhost:5173), create an account, and add your fi
 - **YouTube requires accessible captions.** No audio/video download or speech transcription. Private, restricted, captionless, or host-blocked videos may be unavailable.
 - **Chat uses your selected sources.** It does not search the web for answers. Bounded context selection can omit relevant details, especially in large materials.
 - **Deployment targets one persistent machine.** Multi-instance coordination and object storage are outside the current implementation.
-- **Public production use needs further work.** Authentication, rate limits, and ownership checks are implemented. Email verification, password recovery, managed backups, edge controls, monitoring, and secret rotation remain deployment responsibilities or missing features.
+- **Public production use needs further work.** Authentication, rate limits, and ownership checks are implemented. Optional email verification and password recovery are implemented; email delivery must be configured. Managed backups, edge controls, monitoring, and secret rotation remain deployment responsibilities.
 
 ### Back up both records and files
 
@@ -272,3 +272,15 @@ npm test
 [Open LearnFlow AI ↗](https://tinyurl.com/Learn-Flow-AI)
 
 </div>
+
+### Account emails and local testing
+
+Existing users can still sign in and use all learning features without verifying their email. Registration attempts to send a verification link when email delivery is enabled; the signed-in banner can resend it. The sign-in page includes **Forgot password?**.
+
+Set `LEARNFLOW_EMAIL_MODE` in your ignored `.env`:
+
+- `disabled` (default): existing login/signup continue; account email requests report that delivery is unavailable.
+- `preview`: local development only (`APP_ENV=development`, localhost `LEARNFLOW_PUBLIC_APP_URL`). Emails are saved as `.eml` files under the database directory's `mail-preview/` folder, normally `backend/data/mail-preview/`. Open one in an email viewer to follow its link. These files contain sensitive single-use links; do not share or commit them. No external email is sent.
+- `smtp`: fill `LEARNFLOW_SMTP_HOST`, `LEARNFLOW_SMTP_PORT`, `LEARNFLOW_SMTP_USERNAME`, `LEARNFLOW_SMTP_PASSWORD`, and `LEARNFLOW_EMAIL_FROM`. Connections require STARTTLS by default; use `LEARNFLOW_SMTP_SSL=true` for implicit TLS (typically port 465). Set `LEARNFLOW_PUBLIC_APP_URL` to the actual HTTPS frontend address, then restart the API.
+
+Reset links expire after 30 minutes; verification links after 24 hours. Only token hashes are stored in SQLite. Each link is single-use and purpose-specific; resends have a 60-second account cooldown. A successful reset revokes all sessions for that account. Forgotten-password requests use the same message for known and unknown emails. Verification does not block existing study workflows.

@@ -42,6 +42,7 @@ class UserRecord:
     last_seen_at: str
     active_seconds: int
     disabled: bool
+    email_verified: bool = False
 
     def public_dict(self) -> dict[str, object]:
         return {
@@ -49,6 +50,7 @@ class UserRecord:
             "email": self.email,
             "display_name": self.display_name,
             "role": self.role,
+            "email_verified": self.email_verified,
         }
 
 
@@ -201,6 +203,9 @@ class ResourceStore:
                 )
                 """
             )
+            user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+            if "email_verified" not in user_columns:
+                connection.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -550,6 +555,7 @@ class ResourceStore:
             last_seen_at=row["last_seen_at"],
             active_seconds=int(row["active_seconds"]),
             disabled=bool(row["disabled"]),
+            email_verified=bool(row["email_verified"]),
         )
 
     def create_user(

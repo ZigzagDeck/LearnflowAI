@@ -22,7 +22,6 @@ from .contracts import (
     QuizSubmissionResponse,
     SourceType,
 )
-from .llm_provider import ProviderError
 from .resource_store import ResourceStore, ResourceStoreError
 
 
@@ -194,16 +193,29 @@ class GroundedQuizService:
         if not evidence:
             raise QuizAttemptError("The selected materials contain no quiz-ready text.")
 
-        try:
-            raw = await self.provider.generate_quiz(
-                [chunk.text for chunk in evidence], request.count, request.quiz_type
-            )
-        except ProviderError as exc:
-            raise QuizUnavailableError("Quiz generation is unavailable.") from exc
-        except Exception as exc:
-            raise QuizUnavailableError("Quiz generation is unavailable.") from exc
+        # Retry malformed model output once, using the same authorized evidence.
+        # Provider failures (including quota errors) are never retried here.
+        for attempt in range(2):
+            try:
+                raw = await self.provider.generate_quiz(
+                    [chunk.text for chunk in evidence], request.count, request.quiz_type
+                )
+            except Exception as exc:
+                raise QuizUnavailableError("Quiz generation is unavailable.") from exc
 
-        generated = _parse_generated_quiz(raw, request.count)
+            try:
+                generated = _parse_generated_quiz(raw, request.count)
+                if any(
+                    index < 1 or index > len(evidence)
+                    for item in generated.questions
+                    for index in item.evidence_indices
+                ):
+                    raise QuizUnavailableError("Quiz generation cited unavailable evidence.")
+            except QuizUnavailableError:
+                if attempt == 1:
+                    raise
+                continue
+            break
         stored_questions: list[dict[str, object]] = []
         public_questions: list[QuizQuestion] = []
         for item in generated.questions:
