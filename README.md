@@ -42,7 +42,7 @@ LearnFlow AI turns **PDFs, slides, images, and captioned YouTube videos** into a
 | :--- | :--- |
 | **Questions** | Source-grounded conversations with citations and saved chat history. |
 | **Long reading lists** | Concise summaries, detailed explanations, or study guides. |
-| **Revision goals** | Single-answer, multiple-answer, short-answer, and mixed quizzes with server-side scoring. |
+| **Revision goals** | Single-answer, multiple-answer, short-answer, and mixed quizzes, plus answer review and fresh practice from missed questions. |
 | **Next interview** | Role-aware practice, optional résumé and job context, transcripts, and an evaluation report. |
 | **Need to verify** | Inspectable extracted content and references back to the original source location. |
 
@@ -55,6 +55,30 @@ Add a source → Extract & chunk → Generate embeddings → Ready
 ```
 
 Accounts, per-user source ownership, data export, deletion, and an admin usage view support the full workflow.
+
+### Turn missed answers into your next step
+
+The **Revision Coach** helps you revisit the exact material behind a missed quiz question:
+
+1. Complete a quiz and select **Revise missed questions** on the result screen.
+2. Choose up to three missed questions. Open **Read & revise** for the source passage, explanation, and original reference.
+3. Select **Check understanding** to generate one fresh single-answer question for each selection.
+4. Submit the practice, review its separate score, or return to your original result.
+
+Reading the saved passages makes no AI calls. Fresh practice uses the existing AI provider and usage allowance; it does not change the original quiz score. A perfect score needs no missed-question card. Sources must still be available to your account, and refreshing the browser does not restore the current quiz screen. See the [Revision Coach notes](docs/revision-coach.md) for behavior and limits.
+
+<details>
+<summary><strong>Recent updates · 24 October 2026</strong></summary>
+
+| Update | Why it helps |
+| :--- | :--- |
+| [Quiz generation recovery · PR #1](https://github.com/ZigzagDeck/LearnflowAI/pull/1) | Retries invalid generated output once and rejects invalid source references. |
+| [Account recovery · PR #2](https://github.com/ZigzagDeck/LearnflowAI/pull/2) | Adds optional email verification and password reset links when email delivery is configured. |
+| [Clear material feedback · PR #3](https://github.com/ZigzagDeck/LearnflowAI/pull/3) | Explains when files or videos are ready and gives practical actions for common failures. |
+| [Focused quiz flow · PR #4](https://github.com/ZigzagDeck/LearnflowAI/pull/4) | Shows one question at a time, checks for unanswered questions, and explains correct, missed, and incorrect choices. |
+| [Personal Revision Coach · PR #5](https://github.com/ZigzagDeck/LearnflowAI/pull/5) | Turns missed answers into relevant reading and fresh practice while preserving the original result. |
+
+</details>
 
 ## A closer look
 
@@ -112,6 +136,7 @@ flowchart LR
 | **A separate ingestion worker** | OCR and embedding calls happen outside upload requests. Interrupted work can be requeued. |
 | **Server-side source permissions** | Retrieval is restricted to authorized materials. Video chat respects the supplied playback position. |
 | **Server-side quiz scoring** | Answer keys are withheld when serving questions, then returned with explanations after submission. |
+| **Revision from cited passages** | Missed answers are recomputed on the server. Fresh practice uses their authorized source passages and existing scoring; no database migration or new credentials are needed. |
 
 **Embeddings are part of the implemented pipeline.** Jina generates document and query vectors in the default configuration; SQLite stores document vectors beside the chunks. A separate vector database is not required by this implementation.
 
@@ -228,6 +253,8 @@ The browser sends requests to the backend's public HTTPS address. The GCP worker
 6. Build with `npm run build` and publish `dist/` through Cloudflare Workers Static Assets or Cloudflare Pages.
 7. Test account creation → upload → **Ready** → cited answer from another browser.
 
+After merging backend changes, update the API and ingestion worker on the VM and restart both services before publishing the rebuilt frontend. A GitHub merge alone does not update these manually deployed services. For Revision Coach, check that the deployed API exposes both `GET` and `POST /quiz/{quiz_id}/revision`; it uses the existing database and provider configuration.
+
 ```powershell
 # Example only: replace this with your backend's public HTTPS base URL.
 $env:VITE_API_BASE_URL="https://api.your-domain.example/api"
@@ -249,7 +276,7 @@ npm test
 .\.venv\Scripts\python.exe -m pytest backend\tests -q
 ```
 
-[CI](.github/workflows/ci.yml) defines frontend lint/tests/build, backend compilation/tests, and a Docker API health smoke check. Frontend tests cover safe error messages, Markdown and LaTeX rendering, and citation previews. Backend tests cover authentication and API contracts, uploads, extraction, chunking, retrieval, provider integrations, learning services, and chat history ordering and scope isolation.
+[CI](.github/workflows/ci.yml) defines frontend lint/tests/build, backend compilation/tests, and a Docker API health smoke check. Frontend tests cover safe error messages, material readiness, quiz selections and answer review, account navigation, Markdown and LaTeX rendering, and citation previews. Backend tests cover authentication and API contracts, uploads, extraction, chunking, retrieval, provider integrations, learning services, and chat history ordering and scope isolation. Revision tests cover account ownership, source access, exact cited passages, fresh-question validation, bounded retries, and scoring.
 
 ## Find your way around
 
@@ -260,7 +287,7 @@ npm test
 | **Persistence** | [`resource_store.py`](backend/resource_store.py) — SQLite schema, records, and indexes |
 | **Ingestion** | [`extraction.py`](backend/extraction.py), [`ocr.py`](backend/ocr.py), [`visual_understanding.py`](backend/visual_understanding.py), [`youtube_ingestion.py`](backend/youtube_ingestion.py) |
 | **Search** | [`chunking.py`](backend/chunking.py), [`embeddings.py`](backend/embeddings.py), [`retrieval.py`](backend/retrieval.py) |
-| **Learning** | `backend/*_service.py` — chat, summaries, quizzes, and interviews |
+| **Learning** | `backend/*_service.py` — chat, summaries, quizzes, revision, and interviews; [`revision-coach.md`](docs/revision-coach.md) explains the revision workflow |
 | **Validation and decisions** | [`backend/tests/`](backend/tests/), [`REPORT.md`](REPORT.md) |
 
 ---
