@@ -22,14 +22,14 @@ _LAST_PRUNE = 0.0
 
 def _identity(request: Request) -> str:
     authorization = request.headers.get("authorization", "")
-    if authorization.casefold().startswith("bearer "):
+    if not request.url.path.startswith("/auth/") and authorization.casefold().startswith("bearer "):
         return hashlib.sha256(authorization.encode("utf-8")).hexdigest()
     return request.client.host if request.client else "unknown"
 
 
 def _category(request: Request) -> tuple[str, int]:
     path = request.url.path
-    if path in {"/auth/login", "/auth/register"}:
+    if path.startswith("/auth/") and request.method == "POST":
         return "auth", AUTH_REQUESTS_PER_MINUTE
     if request.method == "POST" and (
         path == "/chat" or path == "/summary" or path.startswith("/quiz")

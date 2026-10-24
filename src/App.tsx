@@ -1,3 +1,4 @@
+import AccountActionScreen, { type AccountAction } from './AccountActionScreen'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent, FormEvent, KeyboardEvent, ReactNode } from 'react'
 import { apiErrorMessage, authErrorMessage } from './auth-errors'
@@ -51,6 +52,7 @@ type UserProfile = {
   email: string
   display_name: string
   role: 'user' | 'admin'
+  email_verified?: boolean
 }
 
 type AdminUserMetric = {
@@ -418,6 +420,7 @@ function AuthScreen({
             {busy ? 'Please wait…' : mode === 'login' ? 'Sign in →' : 'Create account →'}
           </button>
         </form>
+        {mode === 'login' && <a className="auth-switch" href="#forgot-password">Forgot password?</a>}
         <button
           className="auth-switch"
           type="button"
@@ -438,6 +441,8 @@ function App() {
   const [authToken, setAuthToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) || '')
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
   const [authReady, setAuthReady] = useState(() => !window.localStorage.getItem(AUTH_STORAGE_KEY))
+  const [verificationMessage, setVerificationMessage] = useState('')
+  const [verificationBusy, setVerificationBusy] = useState(false)
   const [adminOpen, setAdminOpen] = useState(false)
   const [adminUsers, setAdminUsers] = useState<AdminUserMetric[]>([])
   const [adminBusy, setAdminBusy] = useState(false)
@@ -635,6 +640,7 @@ function App() {
 
   const authenticated = (token: string, user: UserProfile) => {
     clearPrivateWorkspace()
+    setVerificationMessage('')
     window.localStorage.setItem(AUTH_STORAGE_KEY, token)
     setAuthToken(token)
     setCurrentUser(user)
@@ -1625,6 +1631,21 @@ function App() {
     return <div className="app-loading"><span className="loading-spinner" /><p>Opening your study space…</p></div>
   }
 
+  if (publicPage === 'forgot-password' || publicPage === 'reset-password' || publicPage === 'verify-email') return (
+    <AccountActionScreen key={publicPage} mode={publicPage} apiBase={API_BASE_URL} onComplete={(mode: AccountAction) => {
+      if (mode === 'reset-password') {
+        window.localStorage.removeItem(AUTH_STORAGE_KEY)
+        setAuthToken('')
+        setCurrentUser(null)
+        clearPrivateWorkspace()
+      } else if (mode === 'verify-email' && authToken) {
+        void apiFetch(`${API_BASE_URL}/auth/me`).then(async (response) => {
+          if (response.ok) setCurrentUser(await response.json())
+        }).catch(() => { /* Profile will refresh on the next sign-in. */ })
+      }
+    }} />
+  )
+
   if (!currentUser && publicPage === 'landing') return (
     <LandingPage palette={palette} theme={theme} onPaletteChange={setPalette} onToggleTheme={toggleTheme} />
   )
@@ -1673,6 +1694,23 @@ function App() {
           <button className="signout-button" type="button" onClick={() => void logout()}>Sign out</button>
         </div>
       </header>
+
+      {!currentUser.email_verified && <section className="verification-notice" aria-label="Email verification">
+        <span>Your email is not verified yet. You can continue using your study space.</span>
+        <button className="secondary-button" type="button" disabled={verificationBusy} onClick={async () => {
+          setVerificationBusy(true)
+          setVerificationMessage('')
+          try {
+            const response = await apiFetch(`${API_BASE_URL}/auth/send-verification`, { method: 'POST' })
+            const payload = await response.json()
+            if (!response.ok) throw new Error(apiErrorMessage(payload, 'Unable to request verification email.'))
+            setVerificationMessage(payload.message)
+          } catch (reason) {
+            setVerificationMessage(reason instanceof Error ? reason.message : 'Unable to connect. Please try again.')
+          } finally { setVerificationBusy(false) }
+        }}>{verificationBusy ? 'Sending…' : 'Send verification email'}</button>
+        {verificationMessage && <p role="status">{verificationMessage}</p>}
+      </section>}
 
       {videoPreview && (
         <div className="preview-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setVideoPreview(null) }}>

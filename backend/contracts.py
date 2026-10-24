@@ -39,6 +39,7 @@ class UserProfile(StrictModel):
     email: str
     display_name: str
     role: Literal["user", "admin"]
+    email_verified: bool = False
 
 
 class AuthResponse(StrictModel):
