@@ -1,6 +1,6 @@
 """Validated YouTube caption ingestion without downloading video or audio."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 import re
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +19,7 @@ ALLOWED_HOSTS = {
 MAX_TRANSCRIPT_SEGMENTS = 20_000
 MAX_TRANSCRIPT_CHARACTERS = 2_000_000
 MAX_VIDEO_SECONDS = 12 * 60 * 60
+FREETRANSCRIPTAPI_ENDPOINT = "https://api.freetranscriptapi.com/v1/transcript"
 
 
 class YouTubeTranscriptError(RuntimeError):
@@ -35,6 +36,72 @@ class YouTubeReference:
 class YouTubeMetadata:
     title: str
     thumbnail_url: str
+
+
+class FreeTranscriptApiClient:
+    """Small server-side client for timestamped FreeTranscriptAPI captions."""
+
+    def __init__(self, api_key: str = "", *, client: httpx.Client | None = None):
+        self.api_key = api_key.strip()
+        self._client = client
+
+    def fetch(self, video_id: str, languages: tuple[str, ...]):
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        params = {"video_url": video_id}
+        if languages:
+            params["lang"] = languages[0]
+
+        owns_client = self._client is None
+        active_client = self._client or httpx.Client(
+            timeout=30.0,
+            follow_redirects=False,
+        )
+        try:
+            response = active_client.get(
+                FREETRANSCRIPTAPI_ENDPOINT,
+                params=params,
+                headers=headers,
+            )
+            if response.status_code == 401:
+                raise YouTubeTranscriptError(
+                    "The transcript service rejected its configured API key."
+                )
+            if response.status_code == 402:
+                raise YouTubeTranscriptError(
+                    "The transcript service has no credits remaining."
+                )
+            if response.status_code == 404:
+                raise YouTubeTranscriptError(
+                    "No captions are available for this YouTube video."
+                )
+            if response.status_code == 429:
+                raise YouTubeTranscriptError(
+                    "The transcript service usage limit has been reached. Try again later."
+                )
+            if response.status_code >= 500:
+                raise YouTubeTranscriptError(
+                    "The transcript service is temporarily unavailable."
+                )
+            response.raise_for_status()
+            payload = response.json()
+        except YouTubeTranscriptError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            raise YouTubeTranscriptError(
+                "The transcript service could not retrieve this video's captions."
+            ) from exc
+        finally:
+            if owns_client:
+                active_client.close()
+
+        transcript = payload.get("transcript") if isinstance(payload, Mapping) else None
+        if not isinstance(transcript, list):
+            raise YouTubeTranscriptError(
+                "The transcript service returned an invalid response."
+            )
+        return transcript
 
 
 def parse_youtube_url(value: str) -> YouTubeReference:
@@ -96,13 +163,28 @@ def fetch_youtube_metadata(
 
 
 class YouTubeCaptionReader:
-    def __init__(self, languages: tuple[str, ...], *, client=None):
+    def __init__(
+        self,
+        languages: tuple[str, ...],
+        *,
+        provider: str = "youtube_transcript_api",
+        api_key: str = "",
+        client=None,
+    ):
         self.languages = languages
+        self.provider = provider
+        self.api_key = api_key
         self._client = client
 
     def _get_client(self):
         if self._client is not None:
             return self._client
+        if self.provider == "freetranscriptapi":
+            return FreeTranscriptApiClient(self.api_key)
+        if self.provider != "youtube_transcript_api":
+            raise YouTubeTranscriptError(
+                "The configured YouTube transcript provider is invalid."
+            )
         try:
             from youtube_transcript_api import YouTubeTranscriptApi
         except ImportError as exc:
@@ -126,9 +208,17 @@ class YouTubeCaptionReader:
                     raise YouTubeTranscriptError(
                         "This video has too many caption segments to process safely."
                     )
-                text = " ".join(str(getattr(snippet, "text", "")).split())
-                start = float(getattr(snippet, "start"))
-                duration = max(0.0, float(getattr(snippet, "duration")))
+                if isinstance(snippet, Mapping):
+                    text_value = snippet.get("text", "")
+                    start_value = snippet.get("start")
+                    duration_value = snippet.get("duration")
+                else:
+                    text_value = getattr(snippet, "text", "")
+                    start_value = getattr(snippet, "start")
+                    duration_value = getattr(snippet, "duration")
+                text = " ".join(str(text_value).split())
+                start = float(start_value)
+                duration = max(0.0, float(duration_value))
                 end = min(MAX_VIDEO_SECONDS, start + duration)
                 if not text:
                     continue

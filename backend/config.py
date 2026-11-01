@@ -98,6 +98,18 @@ YOUTUBE_TRANSCRIPT_LANGUAGES = tuple(
     ).split(",")
     if language.strip()
 )
+YOUTUBE_TRANSCRIPT_PROVIDER = os.getenv(
+    "LEARNFLOW_YOUTUBE_TRANSCRIPT_PROVIDER", "youtube_transcript_api"
+).strip().casefold()
+if YOUTUBE_TRANSCRIPT_PROVIDER not in {
+    "youtube_transcript_api",
+    "freetranscriptapi",
+}:
+    raise ValueError(
+        "LEARNFLOW_YOUTUBE_TRANSCRIPT_PROVIDER must be "
+        "youtube_transcript_api or freetranscriptapi."
+    )
+FREETRANSCRIPTAPI_API_KEY = os.getenv("FREETRANSCRIPTAPI_API_KEY", "").strip()
 OCR_PROVIDER = os.getenv("LEARNFLOW_OCR_PROVIDER", "google_document_ai").strip()
 OCR_LOCAL_ENGINE_ENABLED = _environment_flag("LEARNFLOW_OCR_LOCAL_ENGINE_ENABLED")
 OCR_LOCAL_FALLBACK_ENABLED = _environment_flag(
@@ -119,7 +131,7 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv(
 EXTRACTION_PIPELINE_VERSION = (
     f"native-{OCR_PROVIDER}-"
     f"{'local-enabled' if OCR_LOCAL_ENGINE_ENABLED else 'cloud-only'}-"
-    "selective-v3+youtube-captions-v1+"
+    f"selective-v3+youtube-captions-v2-{YOUTUBE_TRANSCRIPT_PROVIDER}+"
     f"visual-{'gemma-v1' if VISUAL_UNDERSTANDING_ENABLED else 'disabled'}"
 )
 CHUNKING_PIPELINE_VERSION = "semantic-boundary-v1"

@@ -3,6 +3,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from backend.config import CHUNKING_PIPELINE_VERSION, PROCESSING_PIPELINE_VERSION
@@ -10,7 +11,12 @@ from backend.processing import process_next_job
 from backend.resource_store import ResourceStore
 from backend.retrieval import SQLiteHybridRetriever
 from backend.tests.fake_embeddings import TinyEmbeddingProvider
-from backend.youtube_ingestion import YouTubeCaptionReader, parse_youtube_url
+from backend.youtube_ingestion import (
+    FreeTranscriptApiClient,
+    YouTubeCaptionReader,
+    YouTubeTranscriptError,
+    parse_youtube_url,
+)
 
 
 class FakeTranscriptClient:
@@ -43,6 +49,51 @@ def test_caption_reader_preserves_real_timestamps():
     assert content[0]["start_seconds"] == 1.5
     assert content[0]["end_seconds"] == 4.0
     assert content[1]["text"] == "Backpropagation updates weights."
+
+
+def test_freetranscriptapi_reader_uses_bearer_key_and_normalizes_json():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer test-api-key"
+        assert request.url.params["video_url"] == "dQw4w9WgXcQ"
+        assert request.url.params["lang"] == "en"
+        return httpx.Response(
+            200,
+            json={
+                "language": "en",
+                "title": "Example video",
+                "transcript": [
+                    {"text": "First caption.", "start": 2.0, "duration": 1.25},
+                    {"text": "Second caption.", "start": 3.25, "duration": 2.0},
+                ],
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        api_client = FreeTranscriptApiClient("test-api-key", client=http_client)
+        content = YouTubeCaptionReader(
+            ("en", "hi"),
+            provider="freetranscriptapi",
+            client=api_client,
+        ).fetch("dQw4w9WgXcQ")
+
+    assert content[0]["text"] == "First caption."
+    assert content[0]["start_seconds"] == 2.0
+    assert content[1]["end_seconds"] == 5.25
+
+
+def test_freetranscriptapi_reader_explains_credit_exhaustion():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, json={"error": {"code": "insufficient_credits"}})
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        api_client = FreeTranscriptApiClient("test-api-key", client=http_client)
+        reader = YouTubeCaptionReader(
+            ("en",),
+            provider="freetranscriptapi",
+            client=api_client,
+        )
+        with pytest.raises(YouTubeTranscriptError, match="no credits remaining"):
+            reader.fetch("dQw4w9WgXcQ")
 
 
 def test_youtube_processing_indexes_timestamped_video_without_ocr(tmp_path):

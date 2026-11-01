@@ -7,9 +7,11 @@ from .chunking import build_chunks
 from .config import (
     CHUNKING_PIPELINE_VERSION,
     EXTRACTION_PIPELINE_VERSION,
+    FREETRANSCRIPTAPI_API_KEY,
     VISUAL_MAX_UNITS_PER_MATERIAL,
     VISUAL_UNDERSTANDING_ENABLED,
     YOUTUBE_TRANSCRIPT_LANGUAGES,
+    YOUTUBE_TRANSCRIPT_PROVIDER,
 )
 from .embeddings import (
     EmbeddingProvider,
@@ -42,7 +44,11 @@ def process_next_job(
     ocr_factory: Callable[[], OCRReader] = get_ocr_reader,
     embedding_factory: Callable[[], EmbeddingProvider] = get_embedding_provider,
     caption_factory: Callable[[], YouTubeCaptionReader] = (
-        lambda: YouTubeCaptionReader(YOUTUBE_TRANSCRIPT_LANGUAGES)
+        lambda: YouTubeCaptionReader(
+            YOUTUBE_TRANSCRIPT_LANGUAGES,
+            provider=YOUTUBE_TRANSCRIPT_PROVIDER,
+            api_key=FREETRANSCRIPTAPI_API_KEY,
+        )
     ),
     visual_factory: Callable[[ResourceStore], VisualAnalyzer] = build_visual_analyzer,
 ) -> ProcessingJob | None:
