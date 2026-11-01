@@ -5443,3 +5443,187 @@ a.auth-switch { display: block; text-align: center; margin-top: 1rem; }
 .revision-progress { margin-top: 20px; }
 .revision-practice-header:empty { display: none; }
 .revision-practice-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+
+/* Keep workspace navigation visible without taking space from the page header. */
+.workspace-layout {
+  display: grid;
+  grid-template-columns: 218px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.workspace-sidebar {
+  position: sticky;
+  top: 96px;
+  z-index: 24;
+  max-height: calc(100vh - 112px);
+  padding: 16px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--paper) 91%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 42px color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.workspace-nav-label {
+  margin: 0 8px 10px;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+:root .workspace-sidebar .nav-links {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+:root .workspace-sidebar .nav-links button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  text-align: left;
+}
+
+.workspace-sidebar .nav-links .section-glyph {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.workspace-sidebar .nav-links .section-glyph svg {
+  width: 17px;
+  height: 17px;
+}
+
+.workspace-sidebar .nav-links button.active .section-glyph {
+  color: var(--on-accent, #fffdf5);
+  border-color: var(--olive);
+  background: var(--olive);
+}
+
+.workspace-layout .page-main {
+  min-width: 0;
+}
+
+.workspace-layout + footer {
+  margin-left: 242px;
+}
+
+/* Required-field guidance stays close to the field that needs attention. */
+.required-note {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.required-marker {
+  margin-left: .18em;
+  color: var(--danger);
+  font-weight: 800;
+}
+
+.field-label {
+  display: block;
+  margin: 10px 0 6px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.field-error {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.field-invalid,
+:is(input, textarea, select)[aria-invalid='true'] {
+  border-color: var(--danger) !important;
+}
+
+:is(input, textarea, select)[aria-invalid='true']:focus {
+  outline-color: color-mix(in srgb, var(--danger) 28%, transparent) !important;
+}
+
+@media (max-width: 1100px) {
+  .workspace-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .workspace-layout + footer {
+    margin-left: 206px;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    position: relative;
+  }
+
+  .workspace-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .workspace-sidebar {
+    top: 0;
+    z-index: 29;
+    max-height: none;
+    padding: 8px;
+    overflow: hidden;
+    border-radius: 14px;
+  }
+
+  .workspace-nav-label {
+    display: none;
+  }
+
+  :root .workspace-sidebar .nav-links {
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  :root .workspace-sidebar .nav-links button {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: max-content;
+  }
+
+  .workspace-layout + footer {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 540px) {
+  :root .workspace-sidebar .nav-links button {
+    gap: 7px;
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+
+  .workspace-sidebar .nav-links .section-glyph {
+    width: 28px;
+    height: 28px;
+  }
+}

@@ -26,6 +26,17 @@ const PALETTE_STORAGE_KEY = 'learnflow.palette'
 
 type WorkspaceView = 'materials' | 'chat' | 'summary' | 'quiz' | 'interview' | 'history'
 
+type RequiredField =
+  | 'youtubeUrl'
+  | 'chatSources'
+  | 'chatQuestion'
+  | 'summarySources'
+  | 'quizSources'
+  | 'interviewRole'
+  | 'interviewAnswer'
+
+type RequiredFieldErrors = Partial<Record<RequiredField, string>>
+
 const WORKSPACE_VIEWS: Array<{ id: WorkspaceView; label: string }> = [
   { id: 'materials', label: 'Materials' },
   { id: 'chat', label: 'Ask AI' },
@@ -180,7 +191,11 @@ function SectionGlyph({ kind }: { kind: WorkspaceView }) {
   return <span className={`section-glyph ${kind}`} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">{paths[kind]}</svg></span>
 }
 
-function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit, onToggle, disabled = false }: {
+function RequiredMarker() {
+  return <><span className="required-marker" aria-hidden="true">*</span><span className="sr-only"> required</span></>
+}
+
+function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit, onToggle, disabled = false, required = false }: {
   title: string
   availableIds: string[]
   selectedIds: string[]
@@ -188,12 +203,13 @@ function SelectionToolbar({ title, availableIds, selectedIds, totalCount, limit,
   limit: number
   onToggle: (select: boolean) => void
   disabled?: boolean
+  required?: boolean
 }) {
   const allSelected = availableIds.length > 0 && availableIds.every((id) => selectedIds.includes(id))
   return (
     <div className="source-picker-header">
       <div>
-        <h3>{title}</h3>
+        <h3>{title}{required && <RequiredMarker />}</h3>
         <span>{selectedIds.length} selected · max {limit}</span>
       </div>
       <button type="button" className="source-toggle-all" onClick={() => onToggle(!allSelected)} disabled={disabled || availableIds.length === 0}>
@@ -299,10 +315,17 @@ function AuthScreen({
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<'displayName' | 'email' | 'password', string>>>({})
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (busy) return
+    const nextFieldErrors: typeof fieldErrors = {}
+    if (mode === 'register' && !displayName.trim()) nextFieldErrors.displayName = 'Enter your name.'
+    if (!email.trim()) nextFieldErrors.email = 'Enter your email address.'
+    if (!password) nextFieldErrors.password = 'Enter your password.'
+    setFieldErrors(nextFieldErrors)
+    if (Object.keys(nextFieldErrors).length > 0) return
     setBusy(true)
     setError('')
     try {
@@ -365,40 +388,49 @@ function AuthScreen({
           </button>
         </div>
 
-        <form onSubmit={(event) => void submit(event)}>
+        <form noValidate onSubmit={(event) => void submit(event)}>
+          <p className="required-note"><RequiredMarker /> Required fields</p>
           {mode === 'register' && (
             <label>
-              <span>Your name</span>
+              <span>Your name <RequiredMarker /></span>
               <input
                 value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
+                onChange={(event) => { setDisplayName(event.target.value); setFieldErrors((current) => ({ ...current, displayName: undefined })) }}
                 autoComplete="name"
                 placeholder="e.g. Alex Smith"
                 required
+                aria-invalid={Boolean(fieldErrors.displayName)}
+                aria-describedby={fieldErrors.displayName ? 'auth-name-error' : undefined}
               />
+              {fieldErrors.displayName && <small className="field-error" id="auth-name-error" role="alert">{fieldErrors.displayName}</small>}
             </label>
           )}
           <label>
-            <span>Email address</span>
+            <span>Email address <RequiredMarker /></span>
             <input
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => { setEmail(event.target.value); setFieldErrors((current) => ({ ...current, email: undefined })) }}
               autoComplete="email"
               placeholder="you@example.com"
               required
+              aria-invalid={Boolean(fieldErrors.email)}
+              aria-describedby={fieldErrors.email ? 'auth-email-error' : undefined}
             />
+            {fieldErrors.email && <small className="field-error" id="auth-email-error" role="alert">{fieldErrors.email}</small>}
           </label>
           <label>
-            <span>Password</span>
+            <span>Password <RequiredMarker /></span>
             <div className="password-input-wrap">
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => { setPassword(event.target.value); setFieldErrors((current) => ({ ...current, password: undefined })) }}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 placeholder={mode === 'register' ? 'Min. 8 chars, 1 uppercase, 1 number' : '••••••••'}
                 required
+                aria-invalid={Boolean(fieldErrors.password)}
+                aria-describedby={fieldErrors.password ? 'auth-password-error' : undefined}
               />
               <button
                 type="button"
@@ -420,6 +452,7 @@ function AuthScreen({
                 )}
               </button>
             </div>
+            {fieldErrors.password && <small className="field-error" id="auth-password-error" role="alert">{fieldErrors.password}</small>}
           </label>
           {error && <p className="form-error" role="alert">⚠ {error}</p>}
           <button type="submit" disabled={busy} className="auth-submit">
@@ -519,7 +552,14 @@ function App() {
   const [interviewReport, setInterviewReport] = useState<InterviewReport | null>(null)
   const [interviewReportBusy, setInterviewReportBusy] = useState(false)
   const [interviewHistory, setInterviewHistory] = useState<InterviewSession[]>([])
+  const [requiredFieldErrors, setRequiredFieldErrors] = useState<RequiredFieldErrors>({})
   const interviewMessagesRef = useRef<HTMLDivElement>(null)
+
+  const clearRequiredFieldError = useCallback((field: RequiredField) => {
+    setRequiredFieldErrors((current) => current[field]
+      ? { ...current, [field]: undefined }
+      : current)
+  }, [])
 
   const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers)
@@ -644,6 +684,7 @@ function App() {
     setInterviewInput('')
     setInterviewBusy(false)
     setInterviewReportBusy(false)
+    setRequiredFieldErrors({})
   }
 
   const authenticated = (token: string, user: UserProfile) => {
@@ -820,6 +861,7 @@ function App() {
       return
     }
     setChatError('')
+    if (checked) clearRequiredFieldError('chatSources')
     setChatSourceIds((current) => checked
       ? [...new Set([...current, material.resource_id])]
       : current.filter((id) => id !== material.resource_id))
@@ -856,6 +898,7 @@ function App() {
     } else {
       const selectedIds = chatBulkMaterials.map((item) => item.resource_id)
       setChatSourceIds(selectedIds)
+      if (selectedIds.length > 0) clearRequiredFieldError('chatSources')
     }
     setChatError('')
   }
@@ -959,7 +1002,12 @@ function App() {
 
   const importYoutube = async () => {
     const version = workspaceVersionRef.current
-    if (!youtubeUrl.trim() || status === 'uploading') return
+    if (status === 'uploading') return
+    if (!youtubeUrl.trim()) {
+      setRequiredFieldErrors((current) => ({ ...current, youtubeUrl: 'Enter a YouTube video URL.' }))
+      return
+    }
+    clearRequiredFieldError('youtubeUrl')
     setSelectedFile(null)
     setStatus('uploading')
     setMessage('Validating the YouTube link…')
@@ -1060,7 +1108,13 @@ function App() {
 
   const askChat = async () => {
     const question = chatQuestion.trim()
-    if (!question || chatBusy || chatLoading || chatRequestRef.current || chatSourceIds.length === 0 || pendingChatVideos.length > 0) return
+    if (chatBusy || chatLoading || chatRequestRef.current || pendingChatVideos.length > 0) return
+    const chatRequiredErrors: RequiredFieldErrors = {
+      chatSources: chatSourceIds.length === 0 ? 'Select at least one ready material.' : undefined,
+      chatQuestion: !question ? 'Enter a question before sending.' : undefined,
+    }
+    setRequiredFieldErrors((current) => ({ ...current, ...chatRequiredErrors }))
+    if (chatRequiredErrors.chatSources || chatRequiredErrors.chatQuestion) return
     const request = new AbortController()
     chatRequestRef.current = request
     const optimisticMessage: ChatMessage = {
@@ -1133,6 +1187,7 @@ function App() {
     setChatMessages([])
     setChatError('')
     setChatQuestion('')
+    setRequiredFieldErrors((current) => ({ ...current, chatQuestion: undefined }))
   }
 
   const startNewQuiz = () => {
@@ -1142,11 +1197,17 @@ function App() {
     setQuizAnswers({})
     setQuizResult(null)
     setQuizError('')
+    setRequiredFieldErrors((current) => ({ ...current, quizSources: undefined }))
   }
 
   const generateQuiz = async () => {
     const version = workspaceVersionRef.current
-    if (quizBusy || quizSourceIds.length === 0) return
+    if (quizBusy) return
+    if (quizSourceIds.length === 0) {
+      setRequiredFieldErrors((current) => ({ ...current, quizSources: 'Select at least one ready material.' }))
+      return
+    }
+    clearRequiredFieldError('quizSources')
     setQuizBusy(true)
     setQuizError('')
     setQuiz(null)
@@ -1249,7 +1310,12 @@ function App() {
 
   const generateSummary = async () => {
     const version = workspaceVersionRef.current
-    if (summaryBusy || summarySourceIds.length === 0) return
+    if (summaryBusy) return
+    if (summarySourceIds.length === 0) {
+      setRequiredFieldErrors((current) => ({ ...current, summarySources: 'Select at least one ready material.' }))
+      return
+    }
+    clearRequiredFieldError('summarySources')
     setSummaryBusy(true)
     setSummaryError('')
     try {
@@ -1304,7 +1370,12 @@ function App() {
 
   const startInterview = async () => {
     const version = workspaceVersionRef.current
-    if (!interviewJobRole.trim() || interviewBusy) return
+    if (interviewBusy) return
+    if (!interviewJobRole.trim()) {
+      setRequiredFieldErrors((current) => ({ ...current, interviewRole: 'Enter the job role you want to practise for.' }))
+      return
+    }
+    clearRequiredFieldError('interviewRole')
     setInterviewBusy(true)
     setInterviewError('')
     setInterviewMessages([])
@@ -1350,7 +1421,12 @@ function App() {
   const sendInterviewReply = async () => {
     const version = workspaceVersionRef.current
     const text = interviewInput.trim()
-    if (!text || !interviewSession || interviewBusy || interviewSession.status !== 'active') return
+    if (!interviewSession || interviewBusy || interviewSession.status !== 'active') return
+    if (!text) {
+      setRequiredFieldErrors((current) => ({ ...current, interviewAnswer: 'Enter your answer before sending.' }))
+      return
+    }
+    clearRequiredFieldError('interviewAnswer')
     const userMsg: InterviewMessage = { role: 'candidate', content: text, timestamp: new Date().toISOString() }
     setInterviewMessages((prev) => [...prev, userMsg])
     setInterviewInput('')
@@ -1413,6 +1489,7 @@ function App() {
     setInterviewReport(null)
     setInterviewError('')
     setInterviewInput('')
+    setRequiredFieldErrors((current) => ({ ...current, interviewRole: undefined, interviewAnswer: undefined }))
   }
 
   const deleteInterviewSession = async (id: string) => {
@@ -1705,19 +1782,6 @@ function App() {
           <BookLogo />
           <span className="brand-copy"><strong>LearnFlow<span className="brand-accent"> AI</span></strong><small>Study workspace</small></span>
         </button>
-        <nav className="nav-links" aria-label="Main navigation">
-          {WORKSPACE_VIEWS.map((view) => (
-            <button
-              className={activeView === view.id ? 'active' : ''}
-              type="button"
-              aria-current={activeView === view.id ? 'page' : undefined}
-              onClick={() => navigateTo(view.id)}
-              key={view.id}
-            >
-              {view.label}
-            </button>
-          ))}
-        </nav>
         <div className="profile-cluster">
           <PalettePicker palette={palette} onChange={setPalette} />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
@@ -1757,7 +1821,26 @@ function App() {
         </div>
       )}
 
-      <main className="page-main">
+      <div className="workspace-layout">
+        <aside className="workspace-sidebar">
+          <p className="workspace-nav-label">Workspace</p>
+          <nav className="nav-links" aria-label="Main navigation">
+            {WORKSPACE_VIEWS.map((view) => (
+              <button
+                className={activeView === view.id ? 'active' : ''}
+                type="button"
+                aria-current={activeView === view.id ? 'page' : undefined}
+                onClick={() => navigateTo(view.id)}
+                key={view.id}
+              >
+                <SectionGlyph kind={view.id} />
+                <span>{view.label}</span>
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <main className="page-main">
         {adminOpen && (
           <div className="admin-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAdminOpen(false) }}>
           <section className="admin-panel" role="dialog" aria-modal="true" aria-label="Administrator usage panel">
@@ -1851,18 +1934,24 @@ function App() {
               Once your material is ready, use it for questions, summaries, and quizzes.
             </p>
             <div className="source-divider"><span>or use a video link</span></div>
+            <label className="field-label" htmlFor="youtube-url">YouTube video URL <RequiredMarker /></label>
             <div className="youtube-row">
               <input
+                id="youtube-url"
                 type="url"
                 value={youtubeUrl}
-                onChange={(event) => setYoutubeUrl(event.target.value)}
+                onChange={(event) => { setYoutubeUrl(event.target.value); clearRequiredFieldError('youtubeUrl') }}
                 placeholder="https://www.youtube.com/watch?v=…"
                 aria-label="YouTube video URL"
+                aria-invalid={Boolean(requiredFieldErrors.youtubeUrl)}
+                aria-describedby={requiredFieldErrors.youtubeUrl ? 'youtube-url-error' : undefined}
+                required
               />
               <button type="button" onClick={() => void importYoutube()} disabled={status === 'uploading'}>
                 Add link
               </button>
             </div>
+            {requiredFieldErrors.youtubeUrl && <small className="field-error" id="youtube-url-error" role="alert">{requiredFieldErrors.youtubeUrl}</small>}
             <p className="file-note">Public YouTube videos with available captions</p>
             {selectedFile && (
               <div className="selected-file">
@@ -1963,8 +2052,8 @@ function App() {
             <button className="secondary-button" type="button" onClick={startNewChat}>New chat</button>
           </div>
           <div className="chat-layout">
-            <aside className="source-picker">
-              <SelectionToolbar title="Use ready materials" availableIds={chatBulkMaterials.map((item) => item.resource_id)} selectedIds={chatSourceIds} totalCount={readyMaterials.length} limit={30} onToggle={toggleAllChatSources} disabled={chatBusy || chatLoading} />
+            <aside className={`source-picker${requiredFieldErrors.chatSources ? ' field-invalid' : ''}`}>
+              <SelectionToolbar required title="Use ready materials" availableIds={chatBulkMaterials.map((item) => item.resource_id)} selectedIds={chatSourceIds} totalCount={readyMaterials.length} limit={30} onToggle={toggleAllChatSources} disabled={chatBusy || chatLoading} />
               {readyMaterials.length ? (
                 readyMaterials.map((material) => (
                   <label className={`source-option${chatSourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
@@ -1979,6 +2068,7 @@ function App() {
                   </label>
                 ))
               ) : <p className="history-muted">Add a material and wait until it is ready to ask questions.</p>}
+              {requiredFieldErrors.chatSources && <small className="field-error" role="alert">{requiredFieldErrors.chatSources}</small>}
               {pendingChatVideos.length > 0 && <p className="scope-help" role="status">Loading {pendingChatVideos.length === 1 ? 'video transcript' : 'video transcripts'}…</p>}
               {Object.entries(chatVideoScopes).filter(([sourceId]) => chatSourceIds.includes(sourceId)).map(([sourceId, scope]) => {
                 const video = materials.find((item) => item.resource_id === sourceId)
@@ -2018,21 +2108,26 @@ function App() {
                 {chatBusy && <article className="chat-message assistant thinking-message"><strong>LearnFlow AI</strong><div className="thinking-dots" aria-label="Reading selected materials and composing an answer"><span /><span /><span /></div><small>Reading your selected sources and checking citations…</small></article>}
               </div>
               {chatError && <p className="history-alert" role="alert">{chatError}</p>}
-              <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void askChat() }}>
+              <label className="field-label" htmlFor="chat-question">Your question <RequiredMarker /></label>
+              <form className="chat-compose" noValidate onSubmit={(event) => { event.preventDefault(); void askChat() }}>
                 <textarea
+                  id="chat-question"
                   value={chatQuestion}
-                  onChange={(event) => setChatQuestion(event.target.value)}
+                  onChange={(event) => { setChatQuestion(event.target.value); clearRequiredFieldError('chatQuestion') }}
                   onKeyDown={handleChatKeyDown}
                   placeholder="Ask a question about your selected materials…"
                   aria-label="Question for LearnFlow AI"
                   aria-describedby="chat-compose-help"
                   disabled={chatLoading}
                   maxLength={4000}
+                  required
+                  aria-invalid={Boolean(requiredFieldErrors.chatQuestion)}
                 />
-                <button type="submit" disabled={chatBusy || chatLoading || chatSourceIds.length === 0 || !chatQuestion.trim() || pendingChatVideos.length > 0}>
+                <button type="submit" disabled={chatBusy || chatLoading || pendingChatVideos.length > 0}>
                   {chatBusy ? 'Thinking…' : 'Ask'}
                 </button>
               </form>
+              {requiredFieldErrors.chatQuestion && <small className="field-error" role="alert">{requiredFieldErrors.chatQuestion}</small>}
               <small id="chat-compose-help" className="scope-help">Enter to send · Shift+Enter for a new line{chatSourceIds.length === 0 ? ' · Select a ready material to ask a question.' : ''}</small>
             </div>
           </div>
@@ -2044,22 +2139,23 @@ function App() {
             {summaryResult && <button className="secondary-button" type="button" onClick={() => { setSummaryResult(null); setSummaryError('') }}>Clear summary</button>}
           </div>
           <div className="summary-layout">
-            <aside className="source-picker">
-              <SelectionToolbar title="Summary materials" availableIds={summaryBulkIds} selectedIds={summarySourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => setSummarySourceIds(select ? summaryBulkIds : [])} disabled={summaryBusy} />
+            <aside className={`source-picker${requiredFieldErrors.summarySources ? ' field-invalid' : ''}`}>
+              <SelectionToolbar required title="Summary materials" availableIds={summaryBulkIds} selectedIds={summarySourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => { setSummarySourceIds(select ? summaryBulkIds : []); if (select && summaryBulkIds.length > 0) clearRequiredFieldError('summarySources') }} disabled={summaryBusy} />
               {readyMaterials.length ? readyMaterials.map((material) => (
                 <label className={`source-option${summarySourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
                   <input
                     type="checkbox"
                     checked={summarySourceIds.includes(material.resource_id)}
                     disabled={summaryBusy || (!summarySourceIds.includes(material.resource_id) && summarySourceIds.length >= 12)}
-                    onChange={(event) => setSummarySourceIds((current) => event.target.checked
+                    onChange={(event) => { setSummarySourceIds((current) => event.target.checked
                       ? [...new Set([...current, material.resource_id])].slice(0, 12)
-                      : current.filter((id) => id !== material.resource_id))}
+                      : current.filter((id) => id !== material.resource_id)); if (event.target.checked) clearRequiredFieldError('summarySources') }}
                   />
                   {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
                   <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                 </label>
               )) : <p className="history-muted">Add a material and wait until it is ready to create a summary.</p>}
+              {requiredFieldErrors.summarySources && <small className="field-error" role="alert">{requiredFieldErrors.summarySources}</small>}
               <div className="quiz-controls">
                 <label htmlFor="summary-style">Summary style</label>
                 <select id="summary-style" value={summaryStyle} onChange={(event) => setSummaryStyle(event.target.value as typeof summaryStyle)} disabled={summaryBusy}>
@@ -2067,7 +2163,7 @@ function App() {
                   <option value="detailed">Detailed summary</option>
                   <option value="study_guide">Study guide</option>
                 </select>
-                <button type="button" onClick={() => void generateSummary()} disabled={summaryBusy || summarySourceIds.length === 0}>{summaryBusy ? 'Summarizing…' : 'Generate summary'}</button>
+                <button type="button" onClick={() => void generateSummary()} disabled={summaryBusy}>{summaryBusy ? 'Summarizing…' : 'Generate summary'}</button>
                 <small>Select up to 12 materials. The summary is generated only from sampled, citation-preserving evidence.</small>
               </div>
             </aside>
@@ -2086,8 +2182,8 @@ function App() {
             <button className="secondary-button" type="button" onClick={startNewQuiz} disabled={quizBusy}>New quiz</button>
           </div>
           <div className={`quiz-layout${quiz ? ' quiz-layout-focused' : ''}`}>
-            <aside className="source-picker" hidden={Boolean(quiz)}>
-              <SelectionToolbar title="Quiz materials" availableIds={quizBulkIds} selectedIds={quizSourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => setQuizSourceIds(select ? quizBulkIds : [])} disabled={quizBusy} />
+            <aside className={`source-picker${requiredFieldErrors.quizSources ? ' field-invalid' : ''}`} hidden={Boolean(quiz)}>
+              <SelectionToolbar required title="Quiz materials" availableIds={quizBulkIds} selectedIds={quizSourceIds} totalCount={readyMaterials.length} limit={12} onToggle={(select) => { setQuizSourceIds(select ? quizBulkIds : []); if (select && quizBulkIds.length > 0) clearRequiredFieldError('quizSources') }} disabled={quizBusy} />
               {readyMaterials.length ? (
                 readyMaterials.map((material) => (
                   <label className={`source-option${quizSourceIds.includes(material.resource_id) ? ' selected' : ''}`} key={material.resource_id}>
@@ -2095,15 +2191,16 @@ function App() {
                       type="checkbox"
                       checked={quizSourceIds.includes(material.resource_id)}
                       disabled={quizBusy || (!quizSourceIds.includes(material.resource_id) && quizSourceIds.length >= 12)}
-                      onChange={(event) => setQuizSourceIds((current) => event.target.checked
+                      onChange={(event) => { setQuizSourceIds((current) => event.target.checked
                         ? [...new Set([...current, material.resource_id])].slice(0, 12)
-                        : current.filter((id) => id !== material.resource_id))}
+                        : current.filter((id) => id !== material.resource_id)); if (event.target.checked) clearRequiredFieldError('quizSources') }}
                     />
                     {material.thumbnail_url && <img src={material.thumbnail_url} alt="" />}
                     <span title={material.original_filename}><small>{material.source_type === 'video' ? 'YouTube' : material.source_type.toUpperCase()}</small>{material.original_filename}</span>
                   </label>
                 ))
               ) : <p className="history-muted">Add a material and wait until it is ready to create a quiz.</p>}
+              {requiredFieldErrors.quizSources && <small className="field-error" role="alert">{requiredFieldErrors.quizSources}</small>}
               <div className="quiz-controls">
                 <label htmlFor="quiz-count">Questions</label>
                 <input id="quiz-count" type="number" min="1" max="20" value={quizCount} onChange={(event) => setQuizCount(Math.min(20, Math.max(1, Number(event.target.value) || 1)))} disabled={quizBusy} />
@@ -2114,7 +2211,7 @@ function App() {
                   <option value="multiple_answer">Multiple answers</option>
                   <option value="short_answer">Short answer</option>
                 </select>
-                <button type="button" onClick={() => void generateQuiz()} disabled={quizBusy || quizSourceIds.length === 0}>
+                <button type="button" onClick={() => void generateQuiz()} disabled={quizBusy}>
                   {quizBusy && !quiz ? 'Generating…' : 'Generate quiz'}
                 </button>
                 <small>Answers stay hidden until submission. Multiple-answer questions earn 1 point only when all correct options and no incorrect options are selected.</small>
@@ -2176,9 +2273,10 @@ function App() {
           {!interviewSession && !interviewReport && (
             <div className="interview-setup-layout">
               <div className="interview-setup-form">
+                <p className="required-note"><RequiredMarker /> Required fields</p>
                 <div className="interview-form-group">
                   <label htmlFor="interview-role">
-                    <strong>Target Job Role / Title</strong>
+                    <strong>Target Job Role / Title <RequiredMarker /></strong>
                     <span className="field-hint">Specify the role you are preparing for</span>
                   </label>
                   <input
@@ -2186,16 +2284,20 @@ function App() {
                     type="text"
                     className="interview-input"
                     value={interviewJobRole}
-                    onChange={(e) => setInterviewJobRole(e.target.value)}
+                    onChange={(e) => { setInterviewJobRole(e.target.value); clearRequiredFieldError('interviewRole') }}
                     placeholder="e.g. Senior Frontend Engineer, Product Manager, Data Scientist"
+                    required
+                    aria-invalid={Boolean(requiredFieldErrors.interviewRole)}
+                    aria-describedby={requiredFieldErrors.interviewRole ? 'interview-role-error' : undefined}
                   />
+                  {requiredFieldErrors.interviewRole && <small className="field-error" id="interview-role-error" role="alert">{requiredFieldErrors.interviewRole}</small>}
                   <div className="role-chips">
                     {['Frontend Engineer', 'Full Stack Developer', 'Backend Engineer', 'Data Scientist', 'Product Manager', 'DevOps Specialist'].map((role) => (
                       <button
                         key={role}
                         type="button"
                         className="role-chip"
-                        onClick={() => setInterviewJobRole(role)}
+                        onClick={() => { setInterviewJobRole(role); clearRequiredFieldError('interviewRole') }}
                       >
                         {role}
                       </button>
@@ -2306,7 +2408,7 @@ function App() {
                   type="button"
                   className="start-interview-btn"
                   onClick={() => void startInterview()}
-                  disabled={!interviewJobRole.trim() || interviewBusy}
+                  disabled={interviewBusy}
                 >
                   {interviewBusy ? 'Setting up your interview…' : 'Start Mock Interview →'}
                 </button>
@@ -2403,15 +2505,21 @@ function App() {
 
               {interviewSession.status === 'active' ? (
                 <div className="interview-compose-box">
+                  <label className="field-label" htmlFor="interview-answer">Your answer <RequiredMarker /></label>
                   <textarea
+                    id="interview-answer"
                     className="interview-compose-input"
                     value={interviewInput}
-                    onChange={(e) => setInterviewInput(e.target.value)}
+                    onChange={(e) => { setInterviewInput(e.target.value); clearRequiredFieldError('interviewAnswer') }}
                     onKeyDown={handleInterviewKeyDown}
                     placeholder="Type your response here... (Press Enter to send, Shift+Enter for a new line)"
                     rows={3}
                     disabled={interviewBusy}
+                    required
+                    aria-invalid={Boolean(requiredFieldErrors.interviewAnswer)}
+                    aria-describedby={requiredFieldErrors.interviewAnswer ? 'interview-answer-error' : undefined}
                   />
+                  {requiredFieldErrors.interviewAnswer && <small className="field-error" id="interview-answer-error" role="alert">{requiredFieldErrors.interviewAnswer}</small>}
                   <div className="interview-compose-actions">
                     <button
                       type="button"
@@ -2425,7 +2533,7 @@ function App() {
                       type="button"
                       className="send-response-btn"
                       onClick={() => void sendInterviewReply()}
-                      disabled={!interviewInput.trim() || interviewBusy}
+                      disabled={interviewBusy}
                     >
                       {interviewBusy ? 'Sending…' : 'Send Answer →'}
                     </button>
@@ -2642,7 +2750,8 @@ function App() {
             </div>
           </div>
         </section>
-      </main>
+        </main>
+      </div>
 
       <footer>LearnFlow AI <span>·</span> Your learning, in flow.</footer>
     </div>

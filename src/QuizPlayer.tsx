@@ -17,11 +17,13 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
   const [activeIndex, setActiveIndex] = useState(0)
   const [confirming, setConfirming] = useState(false)
   const [reviewing, setReviewing] = useState(false)
+  const [validationAttempted, setValidationAttempted] = useState(false)
   const heading = useRef<HTMLHeadingElement>(null)
   const question = questions[activeIndex]
   const missing = unansweredQuizIndices(questions, answers)
   const answeredCount = questions.length - missing.length
   const review = result?.questions.find((item) => item.question_id === question?.question_id)
+  const questionAnswered = question ? isQuizAnswered(question, answers[question.question_id]) : false
 
   useEffect(() => {
     heading.current?.focus({ preventScroll: true })
@@ -71,7 +73,7 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
     </section> : <>
       <article className="quiz-question" key={question.question_id}>
         <h3 ref={heading} tabIndex={-1}>{question.question}</h3>
-        <p className="question-type">{question.question_type === 'single_answer' ? 'Choose one' : question.question_type === 'multiple_answer' ? 'Select all correct answers' : 'Write a short answer'}</p>
+        <p className="question-type">{question.question_type === 'single_answer' ? 'Choose one' : question.question_type === 'multiple_answer' ? 'Select all correct answers' : 'Write a short answer'} {!result && <><span className="required-marker" aria-hidden="true">*</span><span className="sr-only"> required</span></>}</p>
         {question.question_type === 'short_answer' ? <>
           {result ? <div className="quiz-answer-text"><span>Your answer</span><p>{review?.submitted_text || 'No answer'}</p></div> : <textarea className="short-answer" aria-label="Your answer" value={answers[question.question_id]?.text || ''}
             onChange={(event) => onAnswer(question.question_id, { indices: [], text: event.target.value })}
@@ -87,6 +89,7 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
             <span className="quiz-option-copy"><span>{option}</span>{label && <small className="quiz-answer-label">{label}</small>}</span>
           </label>
         })}</div>}
+        {!result && validationAttempted && !questionAnswered && <small className="field-error" role="alert">Answer this question before submitting.</small>}
         {review && <div className={`quiz-explanation ${review.correct ? 'correct' : 'incorrect'}`}>
           <p>{quizReviewSummary(review)}</p>
           {renderExplanation(question.question_id)}
@@ -96,7 +99,7 @@ export default function QuizPlayer({ questions, answers, result, busy, onAnswer,
         <button className="secondary-button" type="button" disabled={busy || activeIndex === 0} onClick={() => goTo(activeIndex - 1)}>Previous</button>
         {activeIndex < questions.length - 1 ? <button className="quiz-submit" type="button" disabled={busy} onClick={() => goTo(activeIndex + 1)}>Next</button>
           : result ? <button className="quiz-submit" type="button" onClick={() => setReviewing(false)}>Back to result</button>
-            : <button className="quiz-submit" type="button" disabled={busy} onClick={() => setConfirming(true)}>Review &amp; submit</button>}
+            : <button className="quiz-submit" type="button" disabled={busy} onClick={() => { setValidationAttempted(true); setConfirming(true) }}>Review &amp; submit</button>}
       </div>
     </>}
   </section>
