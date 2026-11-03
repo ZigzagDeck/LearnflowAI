@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   formatVoiceElapsed,
+  interviewVoicePreferenceScore,
   isExpectedSpeechInterruption,
   joinVoiceTranscript,
+  pickPreferredInterviewVoice,
   speechRecognitionErrorMessage,
 } from '../src/interview-voice.ts'
 
@@ -34,4 +36,17 @@ test('stopping question audio does not surface a false playback failure', () => 
   assert.equal(isExpectedSpeechInterruption('interrupted'), true)
   assert.equal(isExpectedSpeechInterruption('audio-busy'), false)
   assert.equal(isExpectedSpeechInterruption(), false)
+})
+
+test('interviewer audio prefers a natural regional English voice', () => {
+  const voices = [
+    { name: 'Basic English', lang: 'en-US', localService: true },
+    { name: 'Microsoft Neerja Online (Natural)', lang: 'en-IN', localService: false },
+    { name: 'Microsoft David', lang: 'en-US', localService: true },
+  ]
+  assert.equal(pickPreferredInterviewVoice(voices, 'en-IN')?.name, voices[1].name)
+  assert.ok(
+    interviewVoicePreferenceScore(voices[1], 'en-IN')
+      > interviewVoicePreferenceScore(voices[0], 'en-IN'),
+  )
 })

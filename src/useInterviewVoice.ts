@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   isExpectedSpeechInterruption,
   joinVoiceTranscript,
+  pickPreferredInterviewVoice,
   speechRecognitionErrorMessage,
 } from './interview-voice'
 
@@ -51,6 +52,7 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
   const intentionallyStoppedUtterancesRef = useRef(new WeakSet<SpeechSynthesisUtterance>())
+  const availableVoicesRef = useRef<SpeechSynthesisVoice[]>([])
   const baseTranscriptRef = useRef('')
   const onChangeRef = useRef(onChange)
   const [listening, setListening] = useState(false)
@@ -65,6 +67,16 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
   const recognitionSupported = typeof window !== 'undefined'
     && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
   const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+
+  useEffect(() => {
+    if (!speechSupported) return
+    const refreshVoices = () => {
+      availableVoicesRef.current = window.speechSynthesis.getVoices()
+    }
+    refreshVoices()
+    window.speechSynthesis.addEventListener('voiceschanged', refreshVoices)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', refreshVoices)
+  }, [speechSupported])
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop()
@@ -148,8 +160,16 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
     stopSpeaking()
     const utterance = new SpeechSynthesisUtterance(text)
     utteranceRef.current = utterance
-    utterance.lang = language
-    utterance.rate = 0.96
+    const preferredVoice = pickPreferredInterviewVoice(
+      availableVoicesRef.current.length > 0
+        ? availableVoicesRef.current
+        : window.speechSynthesis.getVoices(),
+      language,
+    )
+    if (preferredVoice) utterance.voice = preferredVoice
+    utterance.lang = preferredVoice?.lang || language
+    utterance.rate = 1.06
+    utterance.pitch = 1
     utterance.onstart = () => {
       if (utteranceRef.current === utterance) setSpeaking(true)
     }
