@@ -2612,7 +2612,7 @@ function App() {
                         title={interviewVoiceRecognitionSupported ? 'Answer using your microphone' : 'Voice input is not supported in this browser'}
                       >Voice</button>
                     </div>
-                    {interviewInputMode === 'voice' && <small className="voice-privacy-note">Audio is transcribed in your browser. Only the editable text is submitted.</small>}
+                    {interviewInputMode === 'voice' && <small className="voice-privacy-note">Your browser handles speech recognition. LearnFlow submits only the editable transcript, not an audio recording.</small>}
                   </div>
 
                   {interviewInputMode === 'voice' && (
@@ -2653,7 +2653,7 @@ function App() {
                       : 'Type your response here... (Press Enter to send, Shift+Enter for a new line)'}
                     rows={3}
                     disabled={interviewBusy || interviewVoiceListening}
-                    required
+                    aria-required="true"
                     aria-invalid={Boolean(requiredFieldErrors.interviewAnswer)}
                     aria-describedby={requiredFieldErrors.interviewAnswer ? 'interview-answer-error' : undefined}
                   />

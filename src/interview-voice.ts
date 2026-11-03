@@ -29,3 +29,7 @@ export function speechRecognitionErrorMessage(code: string): string {
   }
   return 'Voice recognition stopped unexpectedly. Try again or continue in text mode.'
 }
+
+export function isExpectedSpeechInterruption(code?: string): boolean {
+  return code === 'canceled' || code === 'interrupted'
+}

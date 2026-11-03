@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   formatVoiceElapsed,
+  isExpectedSpeechInterruption,
   joinVoiceTranscript,
   speechRecognitionErrorMessage,
 } from '../src/interview-voice.ts'
@@ -26,4 +27,11 @@ test('microphone failures give actionable text-mode fallbacks', () => {
   assert.match(speechRecognitionErrorMessage('no-speech'), /No speech was detected/)
   assert.match(speechRecognitionErrorMessage('network'), /continue in text mode/)
   assert.match(speechRecognitionErrorMessage('unknown'), /continue in text mode/)
+})
+
+test('stopping question audio does not surface a false playback failure', () => {
+  assert.equal(isExpectedSpeechInterruption('canceled'), true)
+  assert.equal(isExpectedSpeechInterruption('interrupted'), true)
+  assert.equal(isExpectedSpeechInterruption('audio-busy'), false)
+  assert.equal(isExpectedSpeechInterruption(), false)
 })

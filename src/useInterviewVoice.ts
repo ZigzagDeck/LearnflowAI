@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { joinVoiceTranscript, speechRecognitionErrorMessage } from './interview-voice'
+import {
+  isExpectedSpeechInterruption,
+  joinVoiceTranscript,
+  speechRecognitionErrorMessage,
+} from './interview-voice'
 
 type SpeechRecognitionAlternativeLike = { transcript: string }
 type SpeechRecognitionResultLike = {
@@ -45,6 +49,8 @@ type UseInterviewVoiceOptions = {
 
 export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseInterviewVoiceOptions) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const intentionallyStoppedUtterancesRef = useRef(new WeakSet<SpeechSynthesisUtterance>())
   const baseTranscriptRef = useRef('')
   const onChangeRef = useRef(onChange)
   const [listening, setListening] = useState(false)
@@ -73,6 +79,10 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
 
   const stopSpeaking = useCallback(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      if (utteranceRef.current) {
+        intentionallyStoppedUtterancesRef.current.add(utteranceRef.current)
+        utteranceRef.current = null
+      }
       window.speechSynthesis.cancel()
     }
     setSpeaking(false)
@@ -135,18 +145,29 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
   const speak = useCallback((text: string) => {
     if (!speechSupported || !text.trim()) return
     cancelListening()
-    window.speechSynthesis.cancel()
+    stopSpeaking()
     const utterance = new SpeechSynthesisUtterance(text)
+    utteranceRef.current = utterance
     utterance.lang = language
     utterance.rate = 0.96
-    utterance.onstart = () => setSpeaking(true)
-    utterance.onend = () => setSpeaking(false)
-    utterance.onerror = () => {
+    utterance.onstart = () => {
+      if (utteranceRef.current === utterance) setSpeaking(true)
+    }
+    utterance.onend = () => {
+      if (utteranceRef.current === utterance) utteranceRef.current = null
       setSpeaking(false)
+    }
+    utterance.onerror = (event) => {
+      const wasStoppedIntentionally = intentionallyStoppedUtterancesRef.current.has(utterance)
+      intentionallyStoppedUtterancesRef.current.delete(utterance)
+      if (utteranceRef.current === utterance) utteranceRef.current = null
+      setSpeaking(false)
+      if (wasStoppedIntentionally || isExpectedSpeechInterruption(event.error)) return
       setError('The interviewer question could not be played. You can continue by reading it.')
     }
+    setError('')
     window.speechSynthesis.speak(utterance)
-  }, [cancelListening, language, speechSupported])
+  }, [cancelListening, language, speechSupported, stopSpeaking])
 
   useEffect(() => {
     if (!listening) return
