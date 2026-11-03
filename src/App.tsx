@@ -15,6 +15,8 @@ import { PALETTES } from './themes'
 import type { Palette, Theme } from './themes'
 import { publicPageForHash } from './navigation'
 import type { PublicPage } from './navigation'
+import { formatVoiceElapsed, type InterviewInputMode } from './interview-voice'
+import { useInterviewVoice } from './useInterviewVoice'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const MAX_FILE_SIZE = 100 * 1024 * 1024
@@ -547,6 +549,7 @@ function App() {
   const [interviewSession, setInterviewSession] = useState<InterviewSession | null>(null)
   const [interviewMessages, setInterviewMessages] = useState<InterviewMessage[]>([])
   const [interviewInput, setInterviewInput] = useState('')
+  const [interviewInputMode, setInterviewInputMode] = useState<InterviewInputMode>('text')
   const [interviewBusy, setInterviewBusy] = useState(false)
   const [interviewError, setInterviewError] = useState('')
   const [interviewReport, setInterviewReport] = useState<InterviewReport | null>(null)
@@ -554,12 +557,36 @@ function App() {
   const [interviewHistory, setInterviewHistory] = useState<InterviewSession[]>([])
   const [requiredFieldErrors, setRequiredFieldErrors] = useState<RequiredFieldErrors>({})
   const interviewMessagesRef = useRef<HTMLDivElement>(null)
+  const lastSpokenQuestionRef = useRef('')
 
   const clearRequiredFieldError = useCallback((field: RequiredField) => {
     setRequiredFieldErrors((current) => current[field]
       ? { ...current, [field]: undefined }
       : current)
   }, [])
+
+  const updateInterviewVoiceTranscript = useCallback((value: string) => {
+    setInterviewInput(value)
+    if (value.trim()) clearRequiredFieldError('interviewAnswer')
+  }, [clearRequiredFieldError])
+
+  const {
+    recognitionSupported: interviewVoiceRecognitionSupported,
+    speechSupported: interviewSpeechSupported,
+    listening: interviewVoiceListening,
+    speaking: interviewVoiceSpeaking,
+    elapsedSeconds: interviewVoiceElapsed,
+    error: interviewVoiceError,
+    startListening: startInterviewVoice,
+    stopListening: stopInterviewVoice,
+    cancelListening: cancelInterviewVoice,
+    speak: speakInterviewQuestion,
+    stopSpeaking: stopInterviewQuestion,
+    clearError: clearInterviewVoiceError,
+  } = useInterviewVoice({
+    value: interviewInput,
+    onChange: updateInterviewVoiceTranscript,
+  })
 
   const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers)
@@ -626,6 +653,8 @@ function App() {
 
   const clearPrivateWorkspace = () => {
     workspaceVersionRef.current += 1
+    cancelInterviewVoice()
+    stopInterviewQuestion()
     chatRequestRef.current?.abort()
     chatRequestRef.current = null
     videoRequestsRef.current.forEach((request) => request.abort())
@@ -682,6 +711,8 @@ function App() {
     setInterviewJobDesc('')
     setInterviewResume('')
     setInterviewInput('')
+    setInterviewInputMode('text')
+    lastSpokenQuestionRef.current = ''
     setInterviewBusy(false)
     setInterviewReportBusy(false)
     setRequiredFieldErrors({})
@@ -887,6 +918,10 @@ function App() {
   const quizBulkIds = summaryBulkIds
   const interviewBulkIds = readyMaterials.slice(0, 5).map((item) => item.resource_id)
   const pendingChatVideos = readyMaterials.filter((item) => item.source_type === 'video' && chatSourceIds.includes(item.resource_id) && !chatVideoScopes[item.resource_id])
+  const latestInterviewerMessageIndex = interviewMessages.reduce(
+    (latest, message, index) => message.role === 'interviewer' ? index : latest,
+    -1,
+  )
 
   const toggleAllChatSources = (select: boolean) => {
     if (!select) {
@@ -1368,6 +1403,43 @@ function App() {
     if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' })
   }, [interviewMessages, interviewBusy])
 
+  useEffect(() => {
+    if (activeView === 'interview' && interviewSession?.status === 'active') return
+    cancelInterviewVoice()
+    stopInterviewQuestion()
+  }, [activeView, cancelInterviewVoice, interviewSession?.status, stopInterviewQuestion])
+
+  useEffect(() => {
+    if (
+      interviewInputMode !== 'voice'
+      || interviewSession?.status !== 'active'
+      || interviewBusy
+      || !interviewSpeechSupported
+    ) return
+    const latestQuestion = [...interviewMessages].reverse().find((message) => message.role === 'interviewer')
+    if (!latestQuestion) return
+    const questionKey = `${latestQuestion.timestamp}:${latestQuestion.content}`
+    if (questionKey === lastSpokenQuestionRef.current) return
+    lastSpokenQuestionRef.current = questionKey
+    speakInterviewQuestion(latestQuestion.content)
+  }, [
+    interviewBusy,
+    interviewInputMode,
+    interviewMessages,
+    interviewSession?.status,
+    interviewSpeechSupported,
+    speakInterviewQuestion,
+  ])
+
+  const changeInterviewInputMode = (mode: InterviewInputMode) => {
+    if (mode === interviewInputMode) return
+    cancelInterviewVoice()
+    stopInterviewQuestion()
+    clearInterviewVoiceError()
+    if (mode === 'voice') lastSpokenQuestionRef.current = ''
+    setInterviewInputMode(mode)
+  }
+
   const startInterview = async () => {
     const version = workspaceVersionRef.current
     if (interviewBusy) return
@@ -1421,7 +1493,7 @@ function App() {
   const sendInterviewReply = async () => {
     const version = workspaceVersionRef.current
     const text = interviewInput.trim()
-    if (!interviewSession || interviewBusy || interviewSession.status !== 'active') return
+    if (!interviewSession || interviewBusy || interviewVoiceListening || interviewSession.status !== 'active') return
     if (!text) {
       setRequiredFieldErrors((current) => ({ ...current, interviewAnswer: 'Enter your answer before sending.' }))
       return
@@ -1459,6 +1531,8 @@ function App() {
   const fetchInterviewReport = async () => {
     const version = workspaceVersionRef.current
     if (!interviewSession || interviewReportBusy) return
+    cancelInterviewVoice()
+    stopInterviewQuestion()
     setInterviewReportBusy(true)
     setInterviewError('')
     try {
@@ -1484,11 +1558,15 @@ function App() {
   }
 
   const resetInterview = () => {
+    cancelInterviewVoice()
+    stopInterviewQuestion()
     setInterviewSession(null)
     setInterviewMessages([])
     setInterviewReport(null)
     setInterviewError('')
     setInterviewInput('')
+    setInterviewInputMode('text')
+    lastSpokenQuestionRef.current = ''
     setRequiredFieldErrors((current) => ({ ...current, interviewRole: undefined, interviewAnswer: undefined }))
   }
 
@@ -2483,6 +2561,17 @@ function App() {
                     <div className="interview-msg-bubble">
                       <div className="interview-msg-header">
                         <strong>{msg.role === 'interviewer' ? 'AI Interviewer' : currentUser?.display_name || 'You'}</strong>
+                        {msg.role === 'interviewer' && idx === latestInterviewerMessageIndex && interviewInputMode === 'voice' && interviewSpeechSupported && (
+                          <button
+                            type="button"
+                            className="replay-question-btn"
+                            onClick={() => interviewVoiceSpeaking ? stopInterviewQuestion() : speakInterviewQuestion(msg.content)}
+                            disabled={interviewBusy || interviewVoiceListening}
+                            aria-label={interviewVoiceSpeaking ? 'Stop reading the interviewer question' : 'Replay the interviewer question'}
+                          >
+                            {interviewVoiceSpeaking ? '■ Stop audio' : '🔊 Replay question'}
+                          </button>
+                        )}
                       </div>
                       <p className="interview-msg-text">{msg.content}</p>
                     </div>
@@ -2505,20 +2594,70 @@ function App() {
 
               {interviewSession.status === 'active' ? (
                 <div className="interview-compose-box">
-                  <label className="field-label" htmlFor="interview-answer">Your answer <RequiredMarker /></label>
+                  <div className="interview-input-toolbar">
+                    <div className="interview-mode-toggle" role="group" aria-label="Answer input mode">
+                      <button
+                        type="button"
+                        className={interviewInputMode === 'text' ? 'selected' : ''}
+                        aria-pressed={interviewInputMode === 'text'}
+                        onClick={() => changeInterviewInputMode('text')}
+                        disabled={interviewBusy}
+                      >Text</button>
+                      <button
+                        type="button"
+                        className={interviewInputMode === 'voice' ? 'selected' : ''}
+                        aria-pressed={interviewInputMode === 'voice'}
+                        onClick={() => changeInterviewInputMode('voice')}
+                        disabled={interviewBusy || !interviewVoiceRecognitionSupported}
+                        title={interviewVoiceRecognitionSupported ? 'Answer using your microphone' : 'Voice input is not supported in this browser'}
+                      >Voice</button>
+                    </div>
+                    {interviewInputMode === 'voice' && <small className="voice-privacy-note">Audio is transcribed in your browser. Only the editable text is submitted.</small>}
+                  </div>
+
+                  {interviewInputMode === 'voice' && (
+                    <div className={`voice-record-panel${interviewVoiceListening ? ' listening' : ''}`}>
+                      <button
+                        type="button"
+                        className="voice-mic-btn"
+                        onClick={interviewVoiceListening ? stopInterviewVoice : startInterviewVoice}
+                        disabled={interviewBusy || !interviewVoiceRecognitionSupported}
+                        aria-label={interviewVoiceListening ? 'Stop recording answer' : 'Start recording answer'}
+                      >
+                        <span aria-hidden="true">🎙</span>
+                      </button>
+                      <div className="voice-record-status" aria-live="polite">
+                        <strong>{interviewVoiceListening ? 'Listening…' : 'Ready for your answer'}</strong>
+                        <span>{interviewVoiceListening ? formatVoiceElapsed(interviewVoiceElapsed) : 'Press the microphone when you are ready.'}</span>
+                      </div>
+                      <div className="voice-waveform" aria-hidden="true">
+                        {Array.from({ length: 14 }, (_, index) => <span key={index} />)}
+                      </div>
+                      {interviewVoiceListening && (
+                        <button type="button" className="voice-stop-btn" onClick={stopInterviewVoice}>■ Stop</button>
+                      )}
+                    </div>
+                  )}
+
+                  <label className="field-label" htmlFor="interview-answer">
+                    {interviewInputMode === 'voice' ? 'Review your transcript' : 'Your answer'} <RequiredMarker />
+                  </label>
                   <textarea
                     id="interview-answer"
                     className="interview-compose-input"
                     value={interviewInput}
-                    onChange={(e) => { setInterviewInput(e.target.value); clearRequiredFieldError('interviewAnswer') }}
+                    onChange={(e) => { setInterviewInput(e.target.value); clearRequiredFieldError('interviewAnswer'); clearInterviewVoiceError() }}
                     onKeyDown={handleInterviewKeyDown}
-                    placeholder="Type your response here... (Press Enter to send, Shift+Enter for a new line)"
+                    placeholder={interviewInputMode === 'voice'
+                      ? 'Your spoken answer will appear here. Review and edit it before sending.'
+                      : 'Type your response here... (Press Enter to send, Shift+Enter for a new line)'}
                     rows={3}
-                    disabled={interviewBusy}
+                    disabled={interviewBusy || interviewVoiceListening}
                     required
                     aria-invalid={Boolean(requiredFieldErrors.interviewAnswer)}
                     aria-describedby={requiredFieldErrors.interviewAnswer ? 'interview-answer-error' : undefined}
                   />
+                  {interviewInputMode === 'voice' && interviewVoiceError && <small className="voice-error" role="alert">{interviewVoiceError}</small>}
                   {requiredFieldErrors.interviewAnswer && <small className="field-error" id="interview-answer-error" role="alert">{requiredFieldErrors.interviewAnswer}</small>}
                   <div className="interview-compose-actions">
                     <button
@@ -2529,14 +2668,24 @@ function App() {
                     >
                       {interviewReportBusy ? 'Evaluating…' : 'Wrap up & score'}
                     </button>
-                    <button
-                      type="button"
-                      className="send-response-btn"
-                      onClick={() => void sendInterviewReply()}
-                      disabled={interviewBusy}
-                    >
-                      {interviewBusy ? 'Sending…' : 'Send Answer →'}
-                    </button>
+                    <div className="interview-primary-actions">
+                      {interviewInputMode === 'voice' && (
+                        <button
+                          type="button"
+                          className="voice-clear-btn"
+                          onClick={() => { setInterviewInput(''); clearInterviewVoiceError() }}
+                          disabled={interviewBusy || interviewVoiceListening || !interviewInput}
+                        >Clear</button>
+                      )}
+                      <button
+                        type="button"
+                        className="send-response-btn"
+                        onClick={() => void sendInterviewReply()}
+                        disabled={interviewBusy || interviewVoiceListening}
+                      >
+                        {interviewBusy ? 'Sending…' : 'Send Answer →'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               ) : (
