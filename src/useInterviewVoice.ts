@@ -46,17 +46,23 @@ type UseInterviewVoiceOptions = {
   value: string
   onChange: (value: string) => void
   language?: string
+  loadSpeech?: (text: string, signal: AbortSignal) => Promise<Blob | null>
 }
 
-export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseInterviewVoiceOptions) {
+export function useInterviewVoice({ value, onChange, language = 'en-IN', loadSpeech }: UseInterviewVoiceOptions) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef('')
+  const speechRequestRef = useRef<AbortController | null>(null)
+  const speechAttemptRef = useRef(0)
   const intentionallyStoppedUtterancesRef = useRef(new WeakSet<SpeechSynthesisUtterance>())
   const availableVoicesRef = useRef<SpeechSynthesisVoice[]>([])
   const baseTranscriptRef = useRef('')
   const onChangeRef = useRef(onChange)
   const [listening, setListening] = useState(false)
   const [speaking, setSpeaking] = useState(false)
+  const [preparingSpeech, setPreparingSpeech] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [error, setError] = useState('')
 
@@ -66,17 +72,18 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
 
   const recognitionSupported = typeof window !== 'undefined'
     && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
-  const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+  const browserSpeechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+  const speechSupported = Boolean(loadSpeech) || browserSpeechSupported
 
   useEffect(() => {
-    if (!speechSupported) return
+    if (!browserSpeechSupported) return
     const refreshVoices = () => {
       availableVoicesRef.current = window.speechSynthesis.getVoices()
     }
     refreshVoices()
     window.speechSynthesis.addEventListener('voiceschanged', refreshVoices)
     return () => window.speechSynthesis.removeEventListener('voiceschanged', refreshVoices)
-  }, [speechSupported])
+  }, [browserSpeechSupported])
 
   const stopListening = useCallback(() => {
     recognitionRef.current?.stop()
@@ -90,6 +97,19 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
   }, [])
 
   const stopSpeaking = useCallback(() => {
+    speechAttemptRef.current += 1
+    speechRequestRef.current?.abort()
+    speechRequestRef.current = null
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.removeAttribute('src')
+      audioRef.current.load()
+      audioRef.current = null
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current)
+      audioUrlRef.current = ''
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       if (utteranceRef.current) {
         intentionallyStoppedUtterancesRef.current.add(utteranceRef.current)
@@ -97,6 +117,7 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
       }
       window.speechSynthesis.cancel()
     }
+    setPreparingSpeech(false)
     setSpeaking(false)
   }, [])
 
@@ -154,10 +175,11 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
     }
   }, [language, stopSpeaking, value])
 
-  const speak = useCallback((text: string) => {
-    if (!speechSupported || !text.trim()) return
-    cancelListening()
-    stopSpeaking()
+  const speakWithBrowser = useCallback((text: string) => {
+    if (!browserSpeechSupported || !text.trim()) {
+      setError('The interviewer question could not be played. You can continue by reading it.')
+      return
+    }
     const utterance = new SpeechSynthesisUtterance(text)
     utteranceRef.current = utterance
     const preferredVoice = pickPreferredInterviewVoice(
@@ -185,9 +207,65 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
       if (wasStoppedIntentionally || isExpectedSpeechInterruption(event.error)) return
       setError('The interviewer question could not be played. You can continue by reading it.')
     }
-    setError('')
     window.speechSynthesis.speak(utterance)
-  }, [cancelListening, language, speechSupported, stopSpeaking])
+  }, [browserSpeechSupported, language])
+
+  const speak = useCallback((text: string) => {
+    const cleanText = text.trim()
+    if (!speechSupported || !cleanText) return
+    cancelListening()
+    stopSpeaking()
+    setError('')
+    const attempt = speechAttemptRef.current
+    if (!loadSpeech) {
+      speakWithBrowser(cleanText)
+      return
+    }
+
+    const request = new AbortController()
+    speechRequestRef.current = request
+    setPreparingSpeech(true)
+    void loadSpeech(cleanText, request.signal).then(async (audioBlob) => {
+      if (request.signal.aborted || attempt !== speechAttemptRef.current) return
+      speechRequestRef.current = null
+      setPreparingSpeech(false)
+      if (!audioBlob) {
+        speakWithBrowser(cleanText)
+        return
+      }
+      const audioUrl = URL.createObjectURL(audioBlob)
+      const audio = new Audio(audioUrl)
+      audioUrlRef.current = audioUrl
+      audioRef.current = audio
+      audio.onplay = () => {
+        if (audioRef.current === audio) setSpeaking(true)
+      }
+      const finish = () => {
+        if (audioRef.current === audio) audioRef.current = null
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl)
+          audioUrlRef.current = ''
+        }
+        setSpeaking(false)
+      }
+      audio.onended = finish
+      audio.onerror = () => {
+        finish()
+        if (attempt === speechAttemptRef.current) speakWithBrowser(cleanText)
+      }
+      try {
+        await audio.play()
+      } catch {
+        finish()
+        if (attempt === speechAttemptRef.current) speakWithBrowser(cleanText)
+      }
+    }).catch(() => {
+      if (request.signal.aborted || attempt !== speechAttemptRef.current) return
+      speechRequestRef.current = null
+      setPreparingSpeech(false)
+      speakWithBrowser(cleanText)
+    })
+  }, [cancelListening, loadSpeech, speakWithBrowser, speechSupported, stopSpeaking])
 
   useEffect(() => {
     if (!listening) return
@@ -197,6 +275,9 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
 
   useEffect(() => () => {
     recognitionRef.current?.abort()
+    speechRequestRef.current?.abort()
+    audioRef.current?.pause()
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current)
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel()
   }, [])
 
@@ -205,6 +286,7 @@ export function useInterviewVoice({ value, onChange, language = 'en-IN' }: UseIn
     speechSupported,
     listening,
     speaking,
+    preparingSpeech,
     elapsedSeconds,
     error,
     startListening,

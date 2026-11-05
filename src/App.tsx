@@ -570,11 +570,29 @@ function App() {
     if (value.trim()) clearRequiredFieldError('interviewAnswer')
   }, [clearRequiredFieldError])
 
+  const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers)
+    if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
+    return fetch(url, { ...options, headers })
+  }, [authToken])
+
+  const loadInterviewQuestionAudio = useCallback(async (_text: string, signal: AbortSignal) => {
+    if (!interviewSession?.interview_id) return null
+    const response = await apiFetch(`${API_BASE_URL}/interview/${interviewSession.interview_id}/speech`, {
+      method: 'POST',
+      signal,
+    })
+    if (!response.ok) return null
+    const audio = await response.blob()
+    return audio.type.startsWith('audio/') ? audio : null
+  }, [apiFetch, interviewSession])
+
   const {
     recognitionSupported: interviewVoiceRecognitionSupported,
     speechSupported: interviewSpeechSupported,
     listening: interviewVoiceListening,
     speaking: interviewVoiceSpeaking,
+    preparingSpeech: interviewVoicePreparingSpeech,
     elapsedSeconds: interviewVoiceElapsed,
     error: interviewVoiceError,
     startListening: startInterviewVoice,
@@ -586,13 +604,8 @@ function App() {
   } = useInterviewVoice({
     value: interviewInput,
     onChange: updateInterviewVoiceTranscript,
+    loadSpeech: loadInterviewQuestionAudio,
   })
-
-  const apiFetch = useCallback((url: string, options: RequestInit = {}) => {
-    const headers = new Headers(options.headers)
-    if (authToken) headers.set('Authorization', `Bearer ${authToken}`)
-    return fetch(url, { ...options, headers })
-  }, [authToken])
 
   const toggleTheme = () => setTheme((current) => current === 'light' ? 'dark' : 'light')
 
@@ -2565,11 +2578,11 @@ function App() {
                           <button
                             type="button"
                             className="replay-question-btn"
-                            onClick={() => interviewVoiceSpeaking ? stopInterviewQuestion() : speakInterviewQuestion(msg.content)}
+                            onClick={() => (interviewVoiceSpeaking || interviewVoicePreparingSpeech) ? stopInterviewQuestion() : speakInterviewQuestion(msg.content)}
                             disabled={interviewBusy || interviewVoiceListening}
-                            aria-label={interviewVoiceSpeaking ? 'Stop reading the interviewer question' : 'Replay the interviewer question'}
+                            aria-label={(interviewVoiceSpeaking || interviewVoicePreparingSpeech) ? 'Stop reading the interviewer question' : 'Replay the interviewer question'}
                           >
-                            {interviewVoiceSpeaking ? '■ Stop audio' : '🔊 Replay question'}
+                            {interviewVoicePreparingSpeech ? 'Preparing voice…' : interviewVoiceSpeaking ? '■ Stop audio' : '🔊 Replay question'}
                           </button>
                         )}
                       </div>
