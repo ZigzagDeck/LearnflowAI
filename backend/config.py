@@ -75,7 +75,7 @@ KOKORO_VOICES_PATH = Path(
         str(MODEL_CACHE_DIR / "voices-v1.0.bin"),
     )
 )
-KOKORO_VOICE = os.getenv("LEARNFLOW_KOKORO_VOICE", "af_heart").strip()
+KOKORO_VOICE = os.getenv("LEARNFLOW_KOKORO_VOICE", "af_bella").strip()
 KOKORO_LANGUAGE = os.getenv("LEARNFLOW_KOKORO_LANGUAGE", "en-us").strip()
 KOKORO_SPEED = max(
     0.5, min(2.0, float(os.getenv("LEARNFLOW_KOKORO_SPEED", "1.08")))

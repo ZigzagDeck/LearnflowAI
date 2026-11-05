@@ -30,7 +30,7 @@ Set these deployment secrets or environment values:
 LEARNFLOW_INTERVIEW_TTS_PROVIDER=local_kokoro
 LEARNFLOW_KOKORO_MODEL_PATH=/opt/learnflow/backend/data/models/kokoro-v1.0.int8.onnx
 LEARNFLOW_KOKORO_VOICES_PATH=/opt/learnflow/backend/data/models/voices-v1.0.bin
-LEARNFLOW_KOKORO_VOICE=af_heart
+LEARNFLOW_KOKORO_VOICE=af_bella
 LEARNFLOW_KOKORO_LANGUAGE=en-us
 LEARNFLOW_KOKORO_SPEED=1.08
 LEARNFLOW_MIN_INTERVIEW_TTS_FREE_MB=768
