@@ -32,7 +32,7 @@ def _category(request: Request) -> tuple[str, int]:
     if path.startswith("/auth/") and request.method == "POST":
         return "auth", AUTH_REQUESTS_PER_MINUTE
     if request.method == "POST" and (
-        path == "/chat" or path == "/summary" or path.startswith("/quiz")
+        path == "/chat" or path == "/summary" or path.startswith("/quiz") or path.startswith("/interview")
     ):
         return "ai", AI_REQUESTS_PER_MINUTE
     return "general", GENERAL_REQUESTS_PER_MINUTE

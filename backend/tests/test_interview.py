@@ -74,6 +74,15 @@ class FakeInterviewModelProvider:
         })
 
 
+class FakeInterviewVoice:
+    def __init__(self):
+        self.spoken: list[str] = []
+
+    def synthesize(self, text: str) -> bytes:
+        self.spoken.append(text)
+        return b"RIFF-fake-interviewer-audio"
+
+
 @pytest.fixture
 def test_user(tmp_path):
     store = ResourceStore(tmp_path / "test.db")
@@ -145,11 +154,13 @@ def test_interview_api_routes(test_user, monkeypatch):
     store, user, token = test_user
     provider = FakeInterviewModelProvider()
     service = MockInterviewService(provider=provider, store=store)
+    voice_service = FakeInterviewVoice()
 
     # Wire into backend_main app state
     monkeypatch.setattr(backend_main, "get_resource_store", lambda: store)
     backend_main.app.state.resource_store = store
     backend_main.app.state.interview_service = service
+    backend_main.app.state.interview_voice_service = voice_service
 
     with TestClient(backend_main.app) as client:
         headers = {"Authorization": f"Bearer {token}"}
@@ -177,6 +188,18 @@ def test_interview_api_routes(test_user, monkeypatch):
         data = start_res.json()
         interview_id = data["interview_id"]
         assert "Question 1" in data["message"]
+
+        # Only an authenticated owner can synthesize the latest AI question.
+        anon_speech = client.post(f"/interview/{interview_id}/speech")
+        assert anon_speech.status_code == 401
+        speech = client.post(
+            f"/interview/{interview_id}/speech",
+            headers=headers,
+        )
+        assert speech.status_code == 200
+        assert speech.headers["content-type"].startswith("audio/wav")
+        assert speech.headers["cache-control"] == "no-store"
+        assert voice_service.spoken == [data["message"]]
 
         # Respond
         resp_res = client.post(

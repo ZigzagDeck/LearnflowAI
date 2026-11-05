@@ -56,6 +56,33 @@ EMBEDDING_BATCH_SIZE = max(
 MIN_EMBEDDING_FREE_MB = max(
     256, int(os.getenv("LEARNFLOW_MIN_EMBEDDING_FREE_MB", "768"))
 )
+INTERVIEW_TTS_PROVIDER = os.getenv(
+    "LEARNFLOW_INTERVIEW_TTS_PROVIDER", "browser"
+).strip().casefold()
+if INTERVIEW_TTS_PROVIDER not in {"browser", "local_kokoro"}:
+    raise ValueError(
+        "LEARNFLOW_INTERVIEW_TTS_PROVIDER must be browser or local_kokoro."
+    )
+KOKORO_MODEL_PATH = Path(
+    os.getenv(
+        "LEARNFLOW_KOKORO_MODEL_PATH",
+        str(MODEL_CACHE_DIR / "kokoro-v1.0.int8.onnx"),
+    )
+)
+KOKORO_VOICES_PATH = Path(
+    os.getenv(
+        "LEARNFLOW_KOKORO_VOICES_PATH",
+        str(MODEL_CACHE_DIR / "voices-v1.0.bin"),
+    )
+)
+KOKORO_VOICE = os.getenv("LEARNFLOW_KOKORO_VOICE", "af_heart").strip()
+KOKORO_LANGUAGE = os.getenv("LEARNFLOW_KOKORO_LANGUAGE", "en-us").strip()
+KOKORO_SPEED = max(
+    0.5, min(2.0, float(os.getenv("LEARNFLOW_KOKORO_SPEED", "1.08")))
+)
+MIN_INTERVIEW_TTS_FREE_MB = max(
+    256, int(os.getenv("LEARNFLOW_MIN_INTERVIEW_TTS_FREE_MB", "768"))
+)
 JINA_API_KEY = os.getenv("JINA_API_KEY", "").strip()
 JINA_EMBEDDING_MODEL = os.getenv(
     "LEARNFLOW_JINA_EMBEDDING_MODEL", "jina-embeddings-v3"

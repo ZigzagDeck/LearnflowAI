@@ -54,6 +54,13 @@ from .config import (
     JINA_EMBEDDING_DIMENSIONS,
     JINA_EMBEDDING_MODEL,
     JINA_MONTHLY_TOKEN_LIMIT,
+    INTERVIEW_TTS_PROVIDER,
+    KOKORO_LANGUAGE,
+    KOKORO_MODEL_PATH,
+    KOKORO_SPEED,
+    KOKORO_VOICE,
+    KOKORO_VOICES_PATH,
+    MIN_INTERVIEW_TTS_FREE_MB,
 )
 from .embeddings import JINA_USAGE_PROVIDER_KEY
 from .file_validation import validate_upload_content
@@ -70,6 +77,7 @@ from .resource_store import (
     UserRecord,
 )
 from .youtube_ingestion import fetch_youtube_metadata, parse_youtube_url
+from .interview_voice import LocalKokoroInterviewVoice
 
 
 @asynccontextmanager
@@ -95,6 +103,15 @@ async def lifespan(application: FastAPI):
         application.state.quiz_service = build_local_bedrock_quiz_service(store)
         application.state.summary_service = build_local_bedrock_summary_service(store)
         application.state.interview_service = build_local_bedrock_interview_service(store)
+    if INTERVIEW_TTS_PROVIDER == "local_kokoro":
+        application.state.interview_voice_service = LocalKokoroInterviewVoice(
+            model_path=KOKORO_MODEL_PATH,
+            voices_path=KOKORO_VOICES_PATH,
+            voice=KOKORO_VOICE,
+            language=KOKORO_LANGUAGE,
+            speed=KOKORO_SPEED,
+            minimum_free_mb=MIN_INTERVIEW_TTS_FREE_MB,
+        )
     yield
 
 

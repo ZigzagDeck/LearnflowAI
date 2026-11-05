@@ -1,7 +1,8 @@
 """FastAPI router for the AI Mock Interview feature."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from .auth import get_current_user
 from .resource_store import UserRecord
@@ -9,6 +10,11 @@ from .interview_service import (
     InterviewStateError,
     InterviewUnavailableError,
     MockInterviewService,
+)
+from .interview_voice import (
+    InterviewVoiceSynthesisError,
+    InterviewVoiceUnavailableError,
+    LocalKokoroInterviewVoice,
 )
 
 router = APIRouter(prefix="/interview", tags=["interview"])
@@ -20,6 +26,16 @@ def _get_service(request: Request) -> MockInterviewService:
         raise HTTPException(
             status_code=503,
             detail="The AI interview feature is not available. Please check your AI configuration.",
+        )
+    return service
+
+
+def _get_voice_service(request: Request) -> LocalKokoroInterviewVoice:
+    service = getattr(request.app.state, "interview_voice_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Natural interviewer audio is not configured. Continue by reading the question.",
         )
     return service
 
@@ -102,6 +118,47 @@ async def respond(
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=500, detail="Something went wrong during the interview. Please try again.")
+
+
+@router.post("/{interview_id}/speech")
+async def interviewer_speech(
+    interview_id: str,
+    user: UserRecord = Depends(get_current_user),
+    service: MockInterviewService = Depends(_get_service),
+    voice_service: LocalKokoroInterviewVoice = Depends(_get_voice_service),
+):
+    """Speak only the latest AI question from an interview owned by the user."""
+    session = service.get_session(interview_id, user.user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Interview session not found.")
+    history = session.get("history") or []
+    question = next(
+        (
+            str(message.get("content") or "").strip()
+            for message in reversed(history)
+            if message.get("role") == "assistant"
+        ),
+        "",
+    )
+    if not question:
+        raise HTTPException(status_code=409, detail="This interview has no question to play.")
+    try:
+        audio = await run_in_threadpool(voice_service.synthesize, question)
+    except InterviewVoiceUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Natural interviewer audio is temporarily unavailable. Continue by reading the question.",
+        ) from exc
+    except InterviewVoiceSynthesisError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The interviewer audio could not be generated. Continue by reading the question.",
+        ) from exc
+    return Response(
+        content=audio,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/{interview_id}/report")
